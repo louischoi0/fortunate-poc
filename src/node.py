@@ -5,26 +5,24 @@ import socket
 import leveldb
 import time
 import logging
-from utils import get_logger, padding_msg
+from utils import get_logger, padding_msg, get_timestamp
+from time import sleep
+from fortunate_system_const import *
+from blockstorageserver import BlockStorageClient
 
-FLAG_NAMES = [ "1/2","1/4", "1/8", "1/10", "1/100", "1/3"  ]
-FLAG_POSITION = {
-    "1/2": 0,
-    "1/4": 1,
-    "1/8": 2,
-    "1/10": 3,
-    "1/100": 4,
-    "1/3": 5
-}
+from utils import BufferCursor
+
+FLAG_NAMES = ["1/2", "1/4", "1/8", "1/10", "1/100", "1/3"]
+FLAG_POSITION = {"1/2": 0, "1/4": 1, "1/8": 2, "1/10": 3, "1/100": 4, "1/3": 5}
 
 FLAG_THRES = {
-    "1/2": 5000,
-    "1/4": 2500,
-    "1/5": 2000,
-    "1/8": 1250,
-    "1/10": 1000,
-    "1/100": 100,
-    "1/3": 3333, 
+    "1/2": 5000.0,
+    "1/4": 2500.0,
+    "1/5": 2000.0,
+    "1/8": 1250.0,
+    "1/10": 1000.0,
+    "1/100": 100.0,
+    "1/3": 3333.3333,
 }
 
 
@@ -33,26 +31,34 @@ def fp(n):
     thres = FLAG_THRES[n]
     return _n < thres
 
+
 class NodeBlockCommitter:
     def __init__(self):
         pass
-    
+
     def commit(self, sign_key, block_buffer):
-         
         pass
+
 
 class NodeUUIDGenerator:
     def __init__(self):
         pass
 
     @classmethod
-    def getid(self):
-        seed = time.time()    
+    def getid(cls):
+        seed = time.time()
         hasher = hashlib.sha256()
-        hasher.update(str(seed).encode('utf8'))
-        return hasher.hexdigest()
+        hasher.update(str(seed).encode("utf8"))
+        return hasher.hexdigest()[:NODE_ID_LEN]
 
-# 서버 소켓 설정
+    @classmethod
+    def getsigid(cls):
+        seed = time.time()
+        hasher = hashlib.sha256()
+        hasher.update(str(seed).encode("utf8"))
+        return hasher.hexdigest()[:NODE_SIGNAL_ID_LEN]
+
+
 class NodeBackend:
     NODE_MAX_PACKET_SIZE = 1024
     NODE_PACKET_SIZE = 128
@@ -67,152 +73,173 @@ class NodeBackend:
         self.sock = None
         self.client_sock = None
 
-        self.api = NodeApiImpl(node)
+        self.api = None
+        self.poolconnectionmap = {}
 
-    def open(self): 
+        self.blockstorage_client = None
+
+    def init_node_backend(self):
+        self.api = NodeApiImpl(self.node, self)
+        self.blockstorage_client = BlockStorageClient.get_client("node")
+
+    def accept_pool_connection(self, node_sock):
+        pool_socket, client_addr = node_sock.accept()
+        pool_id = self.reply_node_handshake(pool_socket)
+        return pool_socket, client_addr, pool_id
+
+    def open(self):
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as node_sock:
-            node_sock.bind(('', self.port or 0))
+            node_sock.bind(("", self.port or 0))
 
             self.port = node_sock.getsockname()[1]
-            node_sock.listen() 
+            node_sock.listen()
 
             NodeBackend.logger.info(f"open node backend server : { self.port }")
-            pool_socket, cient_addr = node_sock.accept() 
+            pool_socket, client_addr, pool_id = self.accept_pool_connection(node_sock)
 
             while True:
-                signal_emitted = self.node.blink()
-                print("accept")
+                signal_emitted = self.node.signal()
 
-                msg = pool_socket.recv(NodeBackend.NODE_PACKET_SIZE) 
-                NodeBackend.logger.info(f"node#{self.port} received msg: {msg.decode('utf8')}")
-                self.api.call(pool_socket, msg)
-                print("hi") 
-                from time import sleep
+                msg = pool_socket.recv(NodeBackend.NODE_PACKET_SIZE)
+                NodeBackend.logger.info(
+                    f"node#{self.port} received msg: {msg.decode('utf8')}"
+                )
+                self.api.call(pool_id, pool_socket, msg)
                 sleep(3)
 
-            pool_socket.close() 
+            pool_socket.close()
+
+    def reply_node_handshake(self, sock):
+        return self.api.reply_node_handshake(sock)
+
 
 class NodeApiImpl:
-
-    def __init__(self, node):
+    def __init__(self, node, backend, *args, **kwargs):
         self.node = node
         self.opmap = {}
 
+        self.backend = backend
         self.logger = get_logger(self.node._id)
+
+    def reply_node_handshake(self, sock):
+        msg = sock.recv(1024)
+        msg = msg.decode("utf8")
+
+        bcursor = BufferCursor(msg)
+
+        op_code = bcursor.advance(OP_PREFIX_LEN)
+        ts = bcursor.advance(TIMESTAMP_STR_LEN)
+        pool_id = bcursor.advance(POOL_ID_LEN)
+        nid = bcursor.advance(NODE_REGISTER_ID_LEN)
+
+        np_connection = {
+            "node_register_id": nid,
+            "pool_id": pool_id,
+            "sock": sock,
+            "ts": ts,
+        }
+
+        self.backend.poolconnectionmap[pool_id] = np_connection
+
+        NodeBackend.logger.info(f"({pool_id}, {nid}): {msg}")
+        reply_msg = "@initn".encode("utf8")
+
+        sock.send(reply_msg)
+
+        return pool_id
 
     def parse_op_type(self, request_msg):
         op_type = request_msg[:6]
         return op_type
 
-    def reply_sync_node_signal(self, sock):
-        msg = "$00002"
+    def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
+        np_connection = self.backend.poolconnectionmap[pool_id]
+
+        msg = "@snsig"
+        msg += self.node.signal_id
+        msg += get_timestamp()
+        msg += str(self.node._id)
+
+        msg += np_connection["node_register_id"]
+
         signal = self.node.serialize_flags()
         msg += signal
         msg = padding_msg(msg, 32)
 
-        msg = msg.encode('utf8')
         self.logger.info(f"reply: {msg} $len:{len(msg)}")
 
+        msg = msg.encode("utf8")
         sock.send(msg)
-        
-    def call(self, sock, request_msg):
-        request_msg = request_msg.decode('utf8')
+
+    def call(self, pool_id, sock, request_msg):
+        request_msg = request_msg.decode("utf8")
         op_type = self.parse_op_type(request_msg)
+        request_msg = request_msg[6:]
 
-        if op_type == "#00002": # sync_node_signal
-            self.reply_sync_node_signal(sock) 
+        if op_type == "!snsig":  # sync_node_signal
+            self.reply_sync_node_signal(sock, pool_id, request_msg)
 
-        elif op_type == "#00001":
-            sock.send("init_node_connection".encode('utf8'))
+        elif op_type == "!gnsig":
+            self.reply_get_node_signal(sock, pool_id, request_msg)
 
 
 def create_node(port=None):
-    node_id = NodeUUIDGenerator.getid()[:8]
-    node = Node(node_id) 
+    node_id = NodeUUIDGenerator.getid()
+    node = Node(node_id)
+    node.init_node()
     backend = NodeBackend(node, port=port)
-    return node_id, node, backend 
+    backend.init_node_backend()
 
-class Node :
+    return node_id, node, backend
+
+
+class Node:
     logger = get_logger("FNode")
 
     def __init__(self, node_id):
         self._id = node_id
-        self.flags = [ 0, 0, 0, 0, 0, 0 ]     
+        self.flags = [0, 0, 0, 0, 0, 0]
         self.committer = NodeBlockCommitter()
 
         self.last_blinked = None
 
-    def update_flags(self) :
+        self.signal_id = None
+
+    def init_node(self):
+        self.update_signal()
+
+    def update_signal(self):
+        self.signal_id = NodeUUIDGenerator.getsigid()
 
         for idx, name in enumerate(FLAG_NAMES):
             _p = fp(name)
             self.flags[idx] = int(_p)
 
-        ns = self.serialize_flags()
-
     def serialize_flags(self):
-        return reduce(lambda x,y: x + ";" + f"{FLAG_NAMES[y]}:{self.flags[y]}", range(len(self.flags)), "")[1:]
+        signal = reduce(lambda x, y: x + f"{self.flags[y]}", range(len(self.flags)), "")
+        return padding_msg(signal, 10, "0")
 
-    def to_record(self):
+    def get_signal(self):
         return self.serialize_flags()
 
     def after_emit(self):
         self.signal_emitted = False
 
-    def blink(self):
+    def signal(self):
         now = time.time()
         diff = now - (self.last_blinked or now)
-        noise = float(randint(0, 100)) / 100.
+        noise = float(randint(0, 100)) / 100.0
 
-        if diff < 5 + noise: return None
+        if diff < 5 + noise:
+            return None
 
         signal_emitted = self.serialize_flags()
 
         self.last_blinked = now
 
-        self.update_flags() 
+        self.update_signal()
         return signal_emitted
-
-def string_to_number_sequence(input_str, num):
-    input_str = input_str[:num]
-    return [ *map(lambda x: ord(x), input_str) ]
-
-
-class SignTokenGenerator:
-    def __init__(self, sign_key):
-        self.sign_key = sign_key
-
-    def next(self, seed):
-        before = self.sign_key
-        self.sign_key = str(hash(before))
-
-class Fortune:
-    def __init__(self):
-        self.pool = Pool()
-        self.pool.init_pool()
-
-        self.initial_sign_key = "abcdefghjklmnopqrstuvwxyz"
-
-        self.nselector = NodeSelector(self.initial_sign_key)
-    
-    def api(self, req):
-        # 45%
-        nodes_selected = self.nselector(2) 
-        nodes = (( self.pool.nodes[x] for x in nodes_selected ))
-        return self.pool.execute_op("0.45")
-
-class SignalBlock:
-    def __init__(self):
-        pass
-
-class Block:
-    def __init__(self):
-        pass
-
-class Verifier:
-    def __init__(self):
-        pass
 
 class Simulator:
     def __init__(self):
@@ -226,9 +253,9 @@ class Simulator:
         for _ in range(try_cnt):
             r = p.get(pv)
 
-            if r :
+            if r:
                 success_cnt += 1
-            
+
             if r % 5 == 0:
                 p.init_pool()
 
@@ -243,11 +270,11 @@ class Simulator:
 
         for _ in range(try_cnt):
             nodes = p.select_nodes(2)
-            r = p.gte(nodes, "1/3", 1) 
+            r = p.gte(nodes, "1/3", 1)
 
-            if r :
+            if r:
                 success_cnt += 1
-           
+
             if r % 5 == 0:
                 p.init_pool()
 
@@ -255,14 +282,15 @@ class Simulator:
 
 
 class FotuneTimer:
-
     def __init__(self):
         pass
+
 
 if __name__ == "__main__":
 
     import sys
+
     port = int(sys.argv[1])
 
-    _, _, nodebackend  = create_node(port=port)
+    _, _, nodebackend = create_node(port=port)
     nodebackend.open()
