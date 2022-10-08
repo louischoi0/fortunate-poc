@@ -97,7 +97,7 @@ class BlockStorageClientImpl:
         self.client.sock.send(msg)
 
         response_msg = self.client.sock.recv(1024)
-        verify_msg_optype(reponse_msg)
+        verify_msg_optype(reponse_msg, '@cblck')
 
 
 class BlockStorageServer:
@@ -173,15 +173,13 @@ class BlockStorageServer:
         
         record_block = self.blockmap[sign_key]
         block_buffer = BlockStorageImpl.serialize_block((sign_key, record_block))
-        block_buffer = block_buffer.encode('utf8')
-
-        self.db.Put(sign_key, block_buffer)
+        
+        self.db.Put(sign_key.encode('utf8'), block_buffer)
 
         response = "@rblck"
         response = response.encode('utf8')
 
-        sock.reply(response)
-        
+        sock.send(response)
 
     def reply_insert_block_row(self, sock, msg, *args, **kwargs):
         c = BufferCursor(msg)
