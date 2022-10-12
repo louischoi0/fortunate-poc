@@ -1,4 +1,5 @@
 import hashlib
+import threading
 from node import create_node
 import socket
 from utils import get_logger, get_timestamp
@@ -15,6 +16,18 @@ def generate_number_sequence(sign_key, input_str, num, rand_max):
     random.seed(sign_key + input_str)
     return [*(random.randint(0, rand_max - 1) for _ in range(num))]
 
+
+def sync_proc(backend):
+    while True:
+
+        for nodekey in backend.pool.nodemap:
+            backend.sync_node_signal(nodekey)
+
+            # TODO should be flushed by another proc
+            backend.proc_flush_block()
+
+        sleep(2.5)
+        #signals = pool.get_signals_from_node_pool("event0", 2)
 
 class PoolUUIDGenerator:
     def __init__(self):
@@ -33,11 +46,11 @@ class PoolBackend:
 
     def __init__(self, pool):
         self.pool = pool
-
         self.node_count = 0
 
     def init_backend(self):
         self.blockstorage_client = BlockStorageClient.get_client("pool0")
+        self.pool.backend = self
 
     def make_node_connection(self, nodeaddr):
         node_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -59,17 +72,13 @@ class PoolBackend:
         self.pool.nodemap[5050] = c0
         self.pool.nodemap[5051] = c1
 
-        while True:
+        return self.fork_proc_sync_nodes()
 
-            for nodekey in self.pool.nodemap:
-                self.sync_node_signal(nodekey)
-
-                # TODO should be flushed by another proc
-                self.proc_flush_block()
-
-            sleep(3)
-
-            signals = self.get_signals_from_node_pool("event0", 2)
+    def fork_proc_sync_nodes(self, *args, **kwargs):
+        th = threading.Thread(target=sync_proc, args=(self,))
+        PoolBackend.logger.info("Fork thread for sync node signals")
+        th.start()
+        return th
 
     def node_handshake(self, nodesock, *args, **kwargs):
         PoolBackend.logger.info("call:node_handshake.")
@@ -97,7 +106,7 @@ class PoolBackend:
         )
 
         nodesock.send(msg)
-        msg = nodesock.recv(1024)
+        msg = nodesock.recv(8192)
         msg = msg.decode("utf8")
         response_op_type = msg[:6]
 
@@ -114,14 +123,14 @@ class PoolBackend:
         nodesock = self.pool.nodemap[nid]
         opcode = "!snsig"
 
-        msg = opcode + t + ""
+        msg = opcode + t 
         msg = padding_msg(msg, 128)
         msg = msg.encode("utf8")
 
         logger.info(f"call:sync_node_signal $len:{len(msg)}")
 
         nodesock.send(msg)
-        response = nodesock.recv(1024)
+        response = nodesock.recv(8192)
         response = response.decode("utf8")
 
         recv_op_code = response[:6]
@@ -140,10 +149,9 @@ class PoolBackend:
 
         if len(signals) > 3:
             self.write_block(sign_key)
-        
+
         if len(signals) > 5:
             self.blockstorage_client.api.request_commit_block(sign_key)
-        
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
@@ -195,12 +203,10 @@ class PoolImpl:
 
         buffer += self.pool.sign_key.encode("utf8")
 
-        sig_count_field = padding_msg_front(str(len(chain)), 4)
-        buffer += sig_count_field.encode("utf8")
-
         for signal in chain:
+            signal = padding_msg(signal, BLOCK_RECORD_LEN)
             buffer += signal.encode("utf8")
-
+        
         return buffer
 
     def get_node_indicies(self, event_hash, num, node_cnt):
@@ -228,6 +234,8 @@ class Pool:
         self.impl = None
         self.selector = None
 
+        self.backend = None
+
     def insert_signal(self, signal):
         sign_key = self.sign_key
         self.sign_key_published_at = get_timestamp()
@@ -245,7 +253,6 @@ class Pool:
 
         self._id = PoolUUIDGenerator.getid()
         self.selector = NodeSelector(self.sign_key)
-
 
     def mul(self, nodes, flag):
         flags = [*map(lambda x: x.flags[FLAG_POSITION[flag]], nodes)]
@@ -284,7 +291,3 @@ def create_poolbackend():
 
 if __name__ == "__main__":
     create_poolbackend()
-    
-
-
-    

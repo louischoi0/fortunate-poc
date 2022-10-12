@@ -101,7 +101,7 @@ class NodeBackend:
             while True:
                 signal_emitted = self.node.signal()
 
-                msg = pool_socket.recv(NodeBackend.NODE_PACKET_SIZE)
+                msg = pool_socket.recv(8192)
                 NodeBackend.logger.info(
                     f"node#{self.port} received msg: {msg.decode('utf8')}"
                 )
@@ -123,13 +123,14 @@ class NodeApiImpl:
         self.logger = get_logger(self.node._id)
 
     def reply_node_handshake(self, sock):
-        msg = sock.recv(1024)
+        msg = sock.recv(8192)
         msg = msg.decode("utf8")
 
         bcursor = BufferCursor(msg)
 
         op_code = bcursor.advance(OP_PREFIX_LEN)
         ts = bcursor.advance(TIMESTAMP_STR_LEN)
+
         pool_id = bcursor.advance(POOL_ID_LEN)
         nid = bcursor.advance(NODE_REGISTER_ID_LEN)
 
@@ -153,13 +154,19 @@ class NodeApiImpl:
         op_type = request_msg[:6]
         return op_type
 
+    @classmethod
+    def parse_signal_id_from_buffer(self, buffer):
+        return buffer[:NODE_SIGNAL_ID_LEN]
+
     def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
         np_connection = self.backend.poolconnectionmap[pool_id]
 
         msg = "@snsig"
         msg += self.node.signal_id
         msg += get_timestamp()
+        msg += "01"
         msg += str(self.node._id)
+        # msg += "0" * NODE_REGISTER_ID_LEN #TODO
 
         msg += np_connection["node_register_id"]
 
@@ -240,6 +247,7 @@ class Node:
 
         self.update_signal()
         return signal_emitted
+
 
 class Simulator:
     def __init__(self):

@@ -5,6 +5,7 @@ import pool
 from blockstorageserver import BlockStorageServer
 from multiprocessing import Process
 from time import sleep
+from event import FortunateServer
 
 
 def _runnode(port):
@@ -12,9 +13,10 @@ def _runnode(port):
     nodebackend.open()
 
 
-def _runpool():
-    poolbackend = pool.create_poolbackend()
-    poolbackend.ready()
+def _runserver():
+    server = FortunateServer()
+    server.init_server()
+    server.app()
 
 
 def _runblockstorageserver():
@@ -34,4 +36,4 @@ if __name__ == "__main__":
     p1.start()
 
     sleep(1.5)
-    _runpool()
+    _runserver()

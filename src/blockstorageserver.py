@@ -4,7 +4,7 @@ from utils import get_logger, get_timestamp, BufferCursor
 from multiprocessing import Process
 from time import sleep
 from fortunate_system_const import *
-from utils import padding_msg, verify_msg_optype
+from utils import padding_msg, padding_msg_front, verify_msg_optype
 from leveldb import LevelDB
 
 
@@ -26,6 +26,7 @@ class BlockStorageClient:
         client = BlockStorageClient(client_id)
         client.init_client()
         return client
+
 
 class BlockStorageClientImpl:
     def __init__(self, client, *args, **kwargs):
@@ -50,15 +51,13 @@ class BlockStorageClientImpl:
         msg = "!addrc"
         msg += str(requested_at)
         msg += sign_key
-        msg += record_buffer.decode('utf8')
-        msg = padding_msg(msg, 128)
-
+        msg += record_buffer.decode("utf8")
         msg = msg.encode("utf8")
 
         self.logger.info(f"call:request_insert_block_row - data: {msg.decode('utf8')}")
         self.client.sock.send(msg)
 
-        response_msg = self.client.sock.recv(1024)
+        response_msg = self.client.sock.recv(8192*8)
         response_msg = response_msg.decode("utf8")
 
         op_type = response_msg[:6]
@@ -76,7 +75,7 @@ class BlockStorageClientImpl:
         msg = msg.encode("utf8")
         self.client.sock.send(msg)
 
-        response_msg = self.client.sock.recv(1024)
+        response_msg = self.client.sock.recv(8192*8)
         response_msg = response_msg.decode("utf8")
 
         op_type = response_msg[:6]
@@ -96,8 +95,8 @@ class BlockStorageClientImpl:
         self.logger.info(f"call:request_commit_block - sign_key: {sign_key}")
         self.client.sock.send(msg)
 
-        response_msg = self.client.sock.recv(1024)
-        verify_msg_optype(reponse_msg, '@cblck')
+        response_msg = self.client.sock.recv(8192*8)
+        verify_msg_optype(response_msg, "@cblck")
 
 
 class BlockStorageServer:
@@ -131,12 +130,12 @@ class BlockStorageServer:
 
                 th = threading.Thread(target=self.session, args=(blockclient_sock,))
                 BlockStorageServer.logger.info("Fork thread for blockclient_sock")
-                
+
                 th.start()
 
     def session(self, blockclient_sock, *args, **kwargs):
         while True:
-            msg = blockclient_sock.recv(1024)
+            msg = blockclient_sock.recv(8192*8)
             self.logger.info(f"blockserver received msg: {msg}")
 
             self.call(blockclient_sock, msg)
@@ -152,7 +151,7 @@ class BlockStorageServer:
 
         elif op_type == "!rblck":
             self.reply_get_block(sock, msg)
-        
+
         elif op_type == "!cblck":
             self.reply_commit_block(sock, msg)
 
@@ -170,14 +169,14 @@ class BlockStorageServer:
 
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
-        
+
         record_block = self.blockmap[sign_key]
         block_buffer = BlockStorageImpl.serialize_block((sign_key, record_block))
-        
-        self.db.Put(sign_key.encode('utf8'), block_buffer)
+
+        self.db.Put(sign_key.encode("utf8"), block_buffer)
 
         response = "@rblck"
-        response = response.encode('utf8')
+        response = response.encode("utf8")
 
         sock.send(response)
 
@@ -186,7 +185,7 @@ class BlockStorageServer:
 
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
-        record = c.advance(256)
+        record = c.advance(256).decode("utf8")
 
         self.logger.info(
             f"call: reply_insert_block_row - sign_key: {sign_key}, record: {record}"
@@ -220,22 +219,24 @@ class BlockStorageServer:
 
 
 class BlockStorageImpl:
-
     @classmethod
     def serialize_block(self, block_key_pair):
         sign_key, record_block = block_key_pair
         serialized_at = get_timestamp()
 
-        buffer = b""
-        buffer += str(serialized_at).encode("utf8")
-        buffer += sign_key.encode("utf8")
+        buffer = ""
+        buffer += str(serialized_at)
+        buffer += sign_key
+        counts = len(record_block)
 
-        sig_count_field = "0000"  # TODO
+        sig_count_field = padding_msg_front(str(counts), SIGNAL_COUNT_FIELD)
+        buffer += sig_count_field
 
         for record in record_block:
+            record = padding_msg(record, BLOCK_RECORD_LEN)
             buffer += record
 
-        return buffer
+        return buffer.encode("utf8")
 
     def signal_to_buffer(self, sign_key, signal):
         pass
@@ -275,4 +276,3 @@ def _test():
 ## ##
 if __name__ == "__main__":
     _test()
-    

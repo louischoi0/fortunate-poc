@@ -42,8 +42,12 @@ class BufferCursor:
     def __init__(self, buffer):
         self.cursor = 0
         self.buffer = buffer
+        self.length = len(buffer)
 
     def advance(self, length):
         msg = self.buffer[self.cursor : self.cursor + length]
         self.cursor += length
         return msg
+
+    def rest(self):
+        return self.buffer[self.cursor:]
