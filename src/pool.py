@@ -127,7 +127,7 @@ class PoolBackend:
         msg = padding_msg(msg, 128)
         msg = msg.encode("utf8")
 
-        logger.info(f"call:sync_node_signal $len:{len(msg)}")
+        logger.debug(f"call:sync_node_signal $len:{len(msg)}")
 
         nodesock.send(msg)
         response = nodesock.recv(8192)
@@ -147,15 +147,15 @@ class PoolBackend:
         sign_key = self.pool.sign_key
         signals = self.pool.signal_chain[sign_key]
 
-        if len(signals) > 3:
+        if len(signals) % 2 == 0:
             self.write_block(sign_key)
 
-        if len(signals) > 5:
+        if len(signals) % 5 == 0:
             self.blockstorage_client.api.request_commit_block(sign_key)
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
-        self.logger.info(f"Write block buffer: {buffer}")
+        self.logger.debug(f"Write block buffer: {buffer}")
         key = sign_key.encode("utf8")
 
         self.blockstorage_client.api.request_insert_block_row(sign_key, buffer)

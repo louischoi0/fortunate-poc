@@ -54,7 +54,7 @@ class BlockStorageClientImpl:
         msg += record_buffer.decode("utf8")
         msg = msg.encode("utf8")
 
-        self.logger.info(f"call:request_insert_block_row - data: {msg.decode('utf8')}")
+        self.logger.debug(f"call:request_insert_block_row - data: {msg.decode('utf8')}")
         self.client.sock.send(msg)
 
         response_msg = self.client.sock.recv(8192*8)
@@ -82,7 +82,7 @@ class BlockStorageClientImpl:
         assert op_type == "@rblck"
 
         block_buffer = response_msg[6:]
-        self.logger.info(f"get block buffer - buffer: {block_buffer}")
+        self.logger.debug(f"get block buffer - buffer: {block_buffer}")
 
     def request_commit_block(self, sign_key, *args, **kwargs):
         requested_at = get_timestamp()
@@ -92,7 +92,7 @@ class BlockStorageClientImpl:
         msg += sign_key
         msg = msg.encode("utf8")
 
-        self.logger.info(f"call:request_commit_block - sign_key: {sign_key}")
+        self.logger.debug(f"call:request_commit_block - sign_key: {sign_key}")
         self.client.sock.send(msg)
 
         response_msg = self.client.sock.recv(8192*8)
@@ -136,7 +136,7 @@ class BlockStorageServer:
     def session(self, blockclient_sock, *args, **kwargs):
         while True:
             msg = blockclient_sock.recv(8192*8)
-            self.logger.info(f"blockserver received msg: {msg}")
+            self.logger.debug(f"blockserver received msg: {msg}")
 
             self.call(blockclient_sock, msg)
             sleep(1)
@@ -187,7 +187,7 @@ class BlockStorageServer:
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
         record = c.advance(256).decode("utf8")
 
-        self.logger.info(
+        self.logger.debug(
             f"call: reply_insert_block_row - sign_key: {sign_key}, record: {record}"
         )
 
@@ -197,7 +197,7 @@ class BlockStorageServer:
             self.blockmap[sign_key] = [record]
 
         response = "@addrc".encode("utf8")
-        self.logger.info(
+        self.logger.debug(
             f"okay: reply_insert_block_row - sign_key: {sign_key}, record: {record}, response: {response}"
         )
         sock.send(response)
@@ -275,4 +275,6 @@ def _test():
 
 ## ##
 if __name__ == "__main__":
-    _test()
+    #_test()
+    _runserver()
+

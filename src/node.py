@@ -102,7 +102,7 @@ class NodeBackend:
                 signal_emitted = self.node.signal()
 
                 msg = pool_socket.recv(8192)
-                NodeBackend.logger.info(
+                NodeBackend.logger.debug(
                     f"node#{self.port} received msg: {msg.decode('utf8')}"
                 )
                 self.api.call(pool_id, pool_socket, msg)
@@ -115,6 +115,8 @@ class NodeBackend:
 
 
 class NodeApiImpl:
+    logger = get_logger("NodeApiImpl")
+
     def __init__(self, node, backend, *args, **kwargs):
         self.node = node
         self.opmap = {}
@@ -156,7 +158,10 @@ class NodeApiImpl:
 
     @classmethod
     def parse_signal_id_from_buffer(self, buffer):
-        return buffer[:NODE_SIGNAL_ID_LEN]
+        signal_id = buffer[:NODE_SIGNAL_ID_LEN]
+        self.logger.debug(f"parse signal id from buffer: {buffer} - {signal_id}")
+
+        return signal_id
 
     def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
         np_connection = self.backend.poolconnectionmap[pool_id]
@@ -174,7 +179,7 @@ class NodeApiImpl:
         msg += signal
         msg = padding_msg(msg, 32)
 
-        self.logger.info(f"reply: {msg} $len:{len(msg)}")
+        self.logger.debug(f"reply: {msg} $len:{len(msg)}")
 
         msg = msg.encode("utf8")
         sock.send(msg)
@@ -297,8 +302,6 @@ class FotuneTimer:
 if __name__ == "__main__":
 
     import sys
-
     port = int(sys.argv[1])
-
     _, _, nodebackend = create_node(port=port)
     nodebackend.open()

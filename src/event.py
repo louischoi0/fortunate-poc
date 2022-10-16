@@ -126,7 +126,7 @@ class FortunateServer:
             response = padding_msg(response, BLOCK_RECORD_LEN)
             self.blockstorage_client.api.request_insert_block_row(sign_key, response.encode('utf8'))
         
-        self.logger.info(f"api response: {response}")
+        self.logger.debug(f"api response: {response}")
         return response
 
 
@@ -185,4 +185,20 @@ if __name__ == "__main__":
     p0.terminate()
     p1.terminate()
     blockserverproc.terminate()
+
     exit(0)
+
+    server = FortunateServer()
+    server.init_server()
+    server.connect_block_server()
+
+    event_request = {
+        "event_type": "tf",
+        "event_secondary_type": "1;4",
+        "event_hash": "thisisev",
+    }
+
+    server.api(event_request)
+    server.blockstorage_client.api.request_commit_block(server.pool.sign_key)
+    
+
