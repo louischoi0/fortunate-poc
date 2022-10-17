@@ -21,6 +21,7 @@ def sync_proc(backend):
     while True:
 
         for nodekey in backend.pool.nodemap:
+            backend.logger.info(f"nodekey: {nodekey}")
             backend.sync_node_signal(nodekey)
 
             # TODO should be flushed by another proc
@@ -64,13 +65,10 @@ class PoolBackend:
         ip = "127.0.0.1"
 
         addr0 = (ip, 5050)
-        c0 = self.make_node_connection(addr0)
+        self.make_node_connection(addr0)
 
         addr1 = (ip, 5051)
-        c1 = self.make_node_connection(addr1)
-
-        self.pool.nodemap[5050] = c0
-        self.pool.nodemap[5051] = c1
+        self.make_node_connection(addr1)
 
         return self.fork_proc_sync_nodes()
 
@@ -82,6 +80,12 @@ class PoolBackend:
 
     def node_handshake(self, nodesock, *args, **kwargs):
         PoolBackend.logger.info("call:node_handshake.")
+        init_msg = nodesock.recv(8192)  
+        init_msg = init_msg.decode('utf8')
+
+        assert init_msg[:6] == "@echid"
+        node_id_echo = init_msg[6:]
+
         node_cnt = len(self.pool.nodemap.keys())
         nid = node_cnt
         t = get_timestamp()
@@ -89,7 +93,7 @@ class PoolBackend:
         node_detail = {
             "sock": nodesock,
             "nodeseq": nid,
-            "_id": None,
+            "_id": node_id_echo,
             "connected_at": t,
         }
 
@@ -97,7 +101,7 @@ class PoolBackend:
         self.pool.nodedetailmap[nid] = node_detail
 
         opcode = "!initn"
-        nidmsg = padding_msg_front(nid, NODE_REGISTER_ID_LEN, "0")
+        nidmsg = node_id_echo #TODO node_id_echo -> nid
 
         msg = opcode + t + self.pool._id + nidmsg
         msg = msg.encode("utf8")
@@ -106,9 +110,10 @@ class PoolBackend:
         )
 
         nodesock.send(msg)
-        msg = nodesock.recv(8192)
-        msg = msg.decode("utf8")
-        response_op_type = msg[:6]
+        response_msg = nodesock.recv(8192)
+        response_msg = response_msg.decode('utf8') 
+
+        response_op_type = response_msg[:6]
 
         assert response_op_type == "@initn"
 
@@ -127,7 +132,7 @@ class PoolBackend:
         msg = padding_msg(msg, 128)
         msg = msg.encode("utf8")
 
-        logger.debug(f"call:sync_node_signal $len:{len(msg)}")
+        logger.debug(f"call:sync_node_signal $nodeid: {nid},  $len:{len(msg)}")
 
         nodesock.send(msg)
         response = nodesock.recv(8192)
@@ -147,10 +152,10 @@ class PoolBackend:
         sign_key = self.pool.sign_key
         signals = self.pool.signal_chain[sign_key]
 
-        if len(signals) % 2 == 0:
+        if len(signals) % 5 == 0:
             self.write_block(sign_key)
 
-        if len(signals) % 5 == 0:
+        if len(signals) % 10 == 0:
             self.blockstorage_client.api.request_commit_block(sign_key)
 
     def write_block(self, sign_key):
@@ -238,11 +243,15 @@ class Pool:
 
     def insert_signal(self, signal):
         sign_key = self.sign_key
-        self.sign_key_published_at = get_timestamp()
+        #self.sign_key_published_at = get_timestamp()
+        
+        self.logger.debug("call insert_signal")
 
         if sign_key not in self.signal_chain:
+            self.logger.debug(f"initialize signal_chain sign_key: {sign_key} ")
             self.signal_chain[sign_key] = [signal]
         else:
+            self.logger.debug(f"insert signal to {sign_key} : {signal}")
             self.signal_chain[sign_key].append(signal)
 
     def init_pool(self):
@@ -253,6 +262,8 @@ class Pool:
 
         self._id = PoolUUIDGenerator.getid()
         self.selector = NodeSelector(self.sign_key)
+
+        self.logger = get_logger(f"Pool#{self._id}")
 
     def mul(self, nodes, flag):
         flags = [*map(lambda x: x.flags[FLAG_POSITION[flag]], nodes)]

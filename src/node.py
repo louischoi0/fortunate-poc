@@ -49,7 +49,9 @@ class NodeUUIDGenerator:
         seed = time.time()
         hasher = hashlib.sha256()
         hasher.update(str(seed).encode("utf8"))
-        return hasher.hexdigest()[:NODE_ID_LEN]
+        from random import randint 
+        i = randint(10, 99)
+        return hasher.hexdigest()[:NODE_ID_LEN - 2] + str(i)
 
     @classmethod
     def getsigid(cls):
@@ -62,7 +64,6 @@ class NodeUUIDGenerator:
 class NodeBackend:
     NODE_MAX_PACKET_SIZE = 1024
     NODE_PACKET_SIZE = 128
-    logger = get_logger("FNodeBackend")
 
     def __init__(self, node, port, max_packet_size=1024):
         self.node = node
@@ -77,6 +78,7 @@ class NodeBackend:
         self.poolconnectionmap = {}
 
         self.blockstorage_client = None
+        self.logger = get_logger(f"FNodeBackend#{node._id}")
 
     def init_node_backend(self):
         self.api = NodeApiImpl(self.node, self)
@@ -95,14 +97,14 @@ class NodeBackend:
             self.port = node_sock.getsockname()[1]
             node_sock.listen()
 
-            NodeBackend.logger.info(f"open node backend server : { self.port }")
+            self.logger.info(f"open node backend server : { self.port }")
             pool_socket, client_addr, pool_id = self.accept_pool_connection(node_sock)
 
             while True:
                 signal_emitted = self.node.signal()
 
                 msg = pool_socket.recv(8192)
-                NodeBackend.logger.debug(
+                self.logger.debug(
                     f"node#{self.port} received msg: {msg.decode('utf8')}"
                 )
                 self.api.call(pool_id, pool_socket, msg)
@@ -115,16 +117,18 @@ class NodeBackend:
 
 
 class NodeApiImpl:
-    logger = get_logger("NodeApiImpl")
 
     def __init__(self, node, backend, *args, **kwargs):
         self.node = node
         self.opmap = {}
 
         self.backend = backend
-        self.logger = get_logger(self.node._id)
+        self.logger = get_logger(f"NodeApiImpl#{self.node._id}")
 
     def reply_node_handshake(self, sock):
+        init_msg = f"@echid{self.node.node_id}".encode('utf8')
+        sock.send(init_msg)
+
         msg = sock.recv(8192)
         msg = msg.decode("utf8")
 
@@ -134,7 +138,9 @@ class NodeApiImpl:
         ts = bcursor.advance(TIMESTAMP_STR_LEN)
 
         pool_id = bcursor.advance(POOL_ID_LEN)
-        nid = bcursor.advance(NODE_REGISTER_ID_LEN)
+        nid = bcursor.advance(NODE_ID_LEN)
+    
+        self.logger.info(f"node handshake with pool #{pool_id}, node #{nid}")
 
         np_connection = {
             "node_register_id": nid,
@@ -145,7 +151,7 @@ class NodeApiImpl:
 
         self.backend.poolconnectionmap[pool_id] = np_connection
 
-        NodeBackend.logger.info(f"({pool_id}, {nid}): {msg}")
+        self.logger.info(f"({pool_id}, {nid}): {msg}")
         reply_msg = "@initn".encode("utf8")
 
         sock.send(reply_msg)
@@ -171,6 +177,7 @@ class NodeApiImpl:
         msg += get_timestamp()
         msg += "01"
         msg += str(self.node._id)
+        assert self.node._id is not None
         # msg += "0" * NODE_REGISTER_ID_LEN #TODO
 
         msg += np_connection["node_register_id"]
@@ -197,26 +204,27 @@ class NodeApiImpl:
 
 
 def create_node(port=None):
-    node_id = NodeUUIDGenerator.getid()
-    node = Node(node_id)
+    node = Node(None)
     node.init_node()
     backend = NodeBackend(node, port=port)
     backend.init_node_backend()
 
-    return node_id, node, backend
+    return node.node_id, node, backend
 
 
 class Node:
-    logger = get_logger("FNode")
 
     def __init__(self, node_id):
-        self._id = node_id
+        self.node_id = NodeUUIDGenerator.getid() #if node_id is None else node_id
+        self._id = self.node_id
         self.flags = [0, 0, 0, 0, 0, 0]
         self.committer = NodeBlockCommitter()
 
         self.last_blinked = None
 
         self.signal_id = None
+        self.logger = get_logger(f"FNode#{self.node_id}")
+        self.logger.info(f"node#{self.node_id} is created.")
 
     def init_node(self):
         self.update_signal()

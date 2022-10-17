@@ -136,6 +136,11 @@ class BlockStorageServer:
     def session(self, blockclient_sock, *args, **kwargs):
         while True:
             msg = blockclient_sock.recv(8192*8)
+
+            if not msg:
+                self.logger.info("session is closed.")
+                break
+
             self.logger.debug(f"blockserver received msg: {msg}")
 
             self.call(blockclient_sock, msg)
