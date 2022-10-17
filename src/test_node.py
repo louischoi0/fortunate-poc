@@ -6,6 +6,10 @@ import fire
 
 PROCS = []
 
+def terminate_procs(procs):
+    for p in procs:
+        p.terminate()
+
 def get_poolbackend():
     backend = create_poolbackend()
     return backend
@@ -32,6 +36,9 @@ def poolprocfunction(pool):
         pass
 
 class TestSuit:
+    def test_node(self):
+        node_process(5050)
+
     def test_node_pool_handshake(self):
         nproc1 = Process(target=node_process, args=(5050,))
         nproc1.start()
@@ -52,20 +59,27 @@ class TestSuit:
         nproc1 = Process(target=node_process, args=(5050,))
         nproc1.start()
 
-        poolbackend = get_poolbackend()
+        nproc2 = Process(target=node_process, args=(5051,))
+        nproc2.start()
         
         ip = "127.0.0.1"
+        
+        addr0 = (ip, 5050)
+        addr1 = (ip, 5051)
 
         sleep(1.5)
-        addr0 = (ip, 5050)
-        poolbackend.make_node_connection(addr0)
 
-        for _ in range(20):
+        poolbackend = get_poolbackend()
+        poolbackend.make_node_connection(addr0)
+        poolbackend.make_node_connection(addr1)
+
+        for _ in range(10):
             poolbackend.sync_node_signal(0)
-            sleep(0.8)        
+            poolbackend.sync_node_signal(1)
+            sleep(0.5)        
 
         poolbackend.proc_flush_block()
-        return [ nproc1 ]
+        nproc1.terminate()
     
 
 if __name__ == "__main__":
@@ -75,24 +89,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         for p in PROCS:
             p.terminate()
-
-    
-
-    """
-    try:
-        p1,p2,p3 = test_node_pool_handshake()
-        
-    except KeyboardInterrupt:
-        p1.terminate()
-        p2.terminate()
-        p3.terminate()
-    """        
-
-
-    
-
-
-
-
-
 

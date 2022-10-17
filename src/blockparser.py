@@ -67,6 +67,8 @@ class BlockParser:
         
         elif record_type == "02":
             d = cls.parse_event_tail_buffer(tail_buffer)
+        else:
+            d = {}
         
         return {**header, **d}
 
@@ -85,36 +87,7 @@ class BlockParser:
         for _ in range(int(sig_count_field)):
             record_buffer = bcursor.advance(BLOCK_RECORD_LEN)
             record = cls.parse_record(record_buffer)
-            print(record)
-            continue
-
-            scursor = BufferCursor(record_buffer)
-
-            ts_0 = scursor.advance(TIMESTAMP_STR_LEN)
-            sign_key = scursor.advance(POOL_SIGN_KEY_LEN)
-
-            signal_id = scursor.advance(NODE_SIGNAL_ID_LEN)
-            signal_ts = scursor.advance(TIMESTAMP_STR_LEN)
-            record_type = scursor.advance(RECORD_TYPE_FLAG_LEN)
-
-            node_id = scursor.advance(NODE_ID_LEN)
-
-            # node_register_id = scursor.advance(NODE_REGISTER_ID_LEN)
-            node_flag_field = scursor.advance(NODE_FLAG_FIELD_LEN)
-            detail = scursor.rest()
-
-            sig_detail = {
-                "ts_0": ts_0,
-                "record_type": record_type,
-                "sign_key": sign_key,
-                "signal_ts": signal_ts,
-                "signal_id": signal_id,
-                "node_id": node_id,
-                "node_flag_field": node_flag_field,
-                "detail": detail,
-            }
-
-            records.append(sig_detail)
+            records.append(record)
 
         return block_ts, pool_sign_key, records
 

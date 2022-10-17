@@ -1,6 +1,7 @@
 from random import randint, choice
 from functools import reduce
 import hashlib
+import threading
 import socket
 import leveldb
 import time
@@ -165,8 +166,6 @@ class NodeApiImpl:
     @classmethod
     def parse_signal_id_from_buffer(self, buffer):
         signal_id = buffer[:NODE_SIGNAL_ID_LEN]
-        self.logger.debug(f"parse signal id from buffer: {buffer} - {signal_id}")
-
         return signal_id
 
     def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
@@ -228,9 +227,12 @@ class Node:
 
     def init_node(self):
         self.update_signal()
+        self.start_node_daemon_thread()
 
     def update_signal(self):
+        old_id = self.signal_id
         self.signal_id = NodeUUIDGenerator.getsigid()
+        self.logger.debug(f"update signal from: {old_id} to {self.signal_id}")
 
         for idx, name in enumerate(FLAG_NAMES):
             _p = fp(name)
@@ -248,7 +250,7 @@ class Node:
 
     def signal(self):
         now = time.time()
-        diff = now - (self.last_blinked or now)
+        diff = now - (self.last_blinked or 0)
         noise = float(randint(0, 100)) / 100.0
 
         if diff < 5 + noise:
@@ -261,6 +263,17 @@ class Node:
         self.update_signal()
         return signal_emitted
 
+    def app(self):
+        while True: 
+            self.signal() 
+            from time import sleep
+            sleep(3.5)
+
+    def start_node_daemon_thread(self):
+        th = threading.Thread(target=self.app)
+        self.logger.info(f"node#{self.node_id} start node-app thread.")
+        self.daemon_thread = th
+        th.start()
 
 class Simulator:
     def __init__(self):

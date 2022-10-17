@@ -82,7 +82,7 @@ class BlockStorageClientImpl:
         assert op_type == "@rblck"
 
         block_buffer = response_msg[6:]
-        self.logger.debug(f"get block buffer - buffer: {block_buffer}")
+        self.logger.debug(f"get block buffer.")
 
     def request_commit_block(self, sign_key, *args, **kwargs):
         requested_at = get_timestamp()
@@ -190,16 +190,25 @@ class BlockStorageServer:
 
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
-        record = c.advance(256).decode("utf8")
+
+        record = True
 
         self.logger.debug(
             f"call: reply_insert_block_row - sign_key: {sign_key}, record: {record}"
         )
 
-        if sign_key in self.blockmap:
-            self.blockmap[sign_key].append(record)
-        else:
-            self.blockmap[sign_key] = [record]
+        record = c.advance(256).decode("utf8")
+
+        while record and len(record) == 256:
+
+            if sign_key in self.blockmap:
+                self.blockmap[sign_key].append(record)
+            else:
+                self.blockmap[sign_key] = [record]
+
+            record = c.advance(256).decode("utf8")
+
+        print(self.blockmap[sign_key])
 
         response = "@addrc".encode("utf8")
         self.logger.debug(

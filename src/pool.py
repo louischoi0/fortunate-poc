@@ -160,7 +160,7 @@ class PoolBackend:
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
-        self.logger.debug(f"Write block buffer: {buffer}")
+        self.logger.debug(f"Write block buffer")
         key = sign_key.encode("utf8")
 
         self.blockstorage_client.api.request_insert_block_row(sign_key, buffer)
