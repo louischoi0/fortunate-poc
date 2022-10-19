@@ -45,12 +45,13 @@ class BlockStorageClientImpl:
 
         return client_sock
 
-    def request_insert_block_row(self, sign_key, record_buffer, *args, **kwargs):
+    def request_insert_block_row(self, sign_key, record_buffer, record_type="00", *args, **kwargs):
         requested_at = get_timestamp()
 
         msg = "!addrc"
         msg += str(requested_at)
         msg += sign_key
+        msg += record_type
         msg += record_buffer.decode("utf8")
         msg = msg.encode("utf8")
 
@@ -187,6 +188,7 @@ class BlockStorageServer:
 
     def reply_insert_block_row(self, sock, msg, *args, **kwargs):
         c = BufferCursor(msg)
+        self.logger.debug(f"reply_insert_block_row - msg: {msg}")
 
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
@@ -200,7 +202,7 @@ class BlockStorageServer:
         record = c.advance(256).decode("utf8")
 
         while record and len(record) == 256:
-
+    
             if sign_key in self.blockmap:
                 self.blockmap[sign_key].append(record)
             else:
@@ -208,7 +210,7 @@ class BlockStorageServer:
 
             record = c.advance(256).decode("utf8")
 
-        print(self.blockmap[sign_key])
+        #print(self.blockmap[sign_key])
 
         response = "@addrc".encode("utf8")
         self.logger.debug(
@@ -237,17 +239,20 @@ class BlockStorageImpl:
     def serialize_block(self, block_key_pair):
         sign_key, record_block = block_key_pair
         serialized_at = get_timestamp()
-
+        
         buffer = ""
+        """
         buffer += str(serialized_at)
         buffer += sign_key
         counts = len(record_block)
 
         sig_count_field = padding_msg_front(str(counts), SIGNAL_COUNT_FIELD)
         buffer += sig_count_field
+        """
 
         for record in record_block:
             record = padding_msg(record, BLOCK_RECORD_LEN)
+            print(f'bss: len: {len(record)},  {record}')
             buffer += record
 
         return buffer.encode("utf8")

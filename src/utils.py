@@ -38,6 +38,10 @@ def verify_msg_optype(msg, optype):
     assert optype == optype
 
 
+def attach_header(buffer, header, max_len=256):
+    return (header + buffer)[:max_len]
+
+
 class BufferCursor:
     def __init__(self, buffer):
         self.cursor = 0

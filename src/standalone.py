@@ -61,8 +61,8 @@ def _runblockstorageserver():
 
 if __name__ == "__main__":
     blockserverproc = Process(target=_runblockstorageserver)
-    blockserverproc.start()
-    sleep(1.5)
+    #blockserverproc.start()
+    #sleep(1.5)
 
     p0 = Process(target=_runnode, args=(5050,))
     p0.start()

@@ -33,14 +33,6 @@ def fp(n):
     return _n < thres
 
 
-class NodeBlockCommitter:
-    def __init__(self):
-        pass
-
-    def commit(self, sign_key, block_buffer):
-        pass
-
-
 class NodeUUIDGenerator:
     def __init__(self):
         pass
@@ -141,7 +133,7 @@ class NodeApiImpl:
         pool_id = bcursor.advance(POOL_ID_LEN)
         nid = bcursor.advance(NODE_ID_LEN)
     
-        self.logger.info(f"node handshake with pool #{pool_id}, node #{nid}")
+        self.logger.info(f"node handshake with pool#{pool_id}, node #{nid}")
 
         np_connection = {
             "node_register_id": nid,
@@ -158,6 +150,25 @@ class NodeApiImpl:
         sock.send(reply_msg)
 
         return pool_id
+    
+    @classmethod
+    def parse_signal(cls, buffer):
+        cursor = BufferCursor(buffer)
+        signal_id = cursor.advance(NODE_SIGNAL_ID_LEN)
+        ts =  cursor.advance(TIMESTAMP_STR_LEN)
+        record_type = cursor.advance(RECORD_TYPE_FLAG_LEN)
+        node_id = cursor.advance(NODE_ID_LEN)
+        flags = cursor.advance(NODE_FLAG_FIELD_LEN)
+
+        assert record_type == "01"
+
+        return {
+            "signal_id": signal_id,
+            "record_type": record_type,
+            "ts": ts,
+            "node_id": node_id,
+            "flags": flags
+        }
 
     def parse_op_type(self, request_msg):
         op_type = request_msg[:6]
@@ -171,19 +182,18 @@ class NodeApiImpl:
     def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
         np_connection = self.backend.poolconnectionmap[pool_id]
 
-        msg = "@snsig"
-        msg += self.node.signal_id
-        msg += get_timestamp()
-        msg += "01"
-        msg += str(self.node._id)
-        assert self.node._id is not None
+        msg = "@snsig"                      #
+        msg += self.node.signal_id          # 8
+        msg += get_timestamp()              #
+        msg += "01"                         #
+        msg += str(self.node._id)           #
+        assert self.node._id is not None    
         # msg += "0" * NODE_REGISTER_ID_LEN #TODO
-
-        msg += np_connection["node_register_id"]
+        #msg += np_connection["node_register_id"]
 
         signal = self.node.serialize_flags()
         msg += signal
-        msg = padding_msg(msg, 32)
+        msg = padding_msg(msg, 256)
 
         self.logger.debug(f"reply: {msg} $len:{len(msg)}")
 
@@ -217,7 +227,6 @@ class Node:
         self.node_id = NodeUUIDGenerator.getid() #if node_id is None else node_id
         self._id = self.node_id
         self.flags = [0, 0, 0, 0, 0, 0]
-        self.committer = NodeBlockCommitter()
 
         self.last_blinked = None
 
@@ -321,8 +330,9 @@ class FotuneTimer:
 
 
 if __name__ == "__main__":
-
     import sys
     port = int(sys.argv[1])
     _, _, nodebackend = create_node(port=port)
     nodebackend.open()
+
+

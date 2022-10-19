@@ -1,6 +1,6 @@
 import hashlib
 import threading
-from node import create_node
+from node import create_node, NodeApiImpl
 import socket
 from utils import get_logger, get_timestamp
 from utils import padding_msg_front, padding_msg
@@ -120,7 +120,7 @@ class PoolBackend:
         self.node_count += 1
 
     def get_node_signal(self, register_id, *args, **kwargs):
-        logger = PoolBackend.logger
+        logger = self.logger
         t = get_timestamp()
 
         nid = register_id
@@ -129,7 +129,7 @@ class PoolBackend:
         opcode = "!snsig"
 
         msg = opcode + t 
-        msg = padding_msg(msg, 128)
+        msg = padding_msg(msg, 256)
         msg = msg.encode("utf8")
 
         logger.debug(f"call:sync_node_signal $nodeid: {nid},  $len:{len(msg)}")
@@ -142,6 +142,9 @@ class PoolBackend:
 
         assert recv_op_code == "@snsig"
         signal = response[6:]
+
+        signal_dict = NodeApiImpl.parse_signal(signal)
+        self.logger.info(f"signal dict: {signal_dict} from {signal}")
         return signal
 
     def sync_node_signal(self, nid, *args, **kwargs):
@@ -160,6 +163,7 @@ class PoolBackend:
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
+        assert len(buffer) % BLOCK_RECORD_LEN == 0
         self.logger.debug(f"Write block buffer")
         key = sign_key.encode("utf8")
 
@@ -203,15 +207,19 @@ class PoolImpl:
 
         chain = self.pool.signal_chain[sign_key]
 
-        buffer = b""
-        buffer += str(materialize_at).encode("utf8")
+        buffer = ""
+        buffer += str(materialize_at)
 
-        buffer += self.pool.sign_key.encode("utf8")
+        buffer += self.pool.sign_key
+        buffer = padding_msg(buffer, BLOCK_RECORD_LEN).encode('utf8')
+
+        assert len(buffer) == BLOCK_RECORD_LEN
 
         for signal in chain:
             signal = padding_msg(signal, BLOCK_RECORD_LEN)
             buffer += signal.encode("utf8")
-        
+
+        assert len(buffer) % BLOCK_RECORD_LEN == 0
         return buffer
 
     def get_node_indicies(self, event_hash, num, node_cnt):

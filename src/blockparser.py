@@ -20,7 +20,7 @@ class BlockParser:
         return {
             "node_id": node_id,
             "node_flag_field": node_flag_field,
-            "detail": detail,
+            #"detail": detail,
         }
     
     @classmethod
@@ -40,11 +40,8 @@ class BlockParser:
     @classmethod
     def parse_record(cls, record_buffer):
         scursor = BufferCursor(record_buffer)
-
-        ts_0 = scursor.advance(TIMESTAMP_STR_LEN)
-        ts_0 = unix_timestamp_to_ts(ts_0)
-
-        sign_key = scursor.advance(POOL_SIGN_KEY_LEN)
+        print(scursor.buffer)
+        #sign_key = scursor.advance(POOL_SIGN_KEY_LEN)
 
         record_secondary_id = scursor.advance(NODE_SIGNAL_ID_LEN)
         record_secondary_ts = scursor.advance(TIMESTAMP_STR_LEN)
@@ -53,8 +50,7 @@ class BlockParser:
         record_type = scursor.advance(RECORD_TYPE_FLAG_LEN)
 
         header = {
-            "ts_0": ts_0,
-            "sign_key": sign_key,
+            "sign_key": '',
             "record_secondary_id": record_secondary_id,
             "record_secondary_ts": record_secondary_ts,
             "record_type": record_type,
@@ -75,13 +71,20 @@ class BlockParser:
     @classmethod
     def parse(cls, block):
         block = block.decode("utf8")
-
         bcursor = BufferCursor(block)
+        buffer = bcursor.advance(256)
+        print(buffer)
+        while buffer and len(buffer) == 256:
+            buffer = bcursor.advance(256)
+            print(buffer)
+        return 
 
-        block_ts = bcursor.advance(TIMESTAMP_STR_LEN)
-        pool_sign_key = bcursor.advance(POOL_SIGN_KEY_LEN)
+        header_cursor = BufferCursor(bcursor.advance(256))
 
-        sig_count_field = bcursor.advance(SIGNAL_COUNT_FIELD)
+        block_ts = header_cursor.advance(TIMESTAMP_STR_LEN)
+        pool_sign_key = header_cursor.advance(POOL_SIGN_KEY_LEN)
+
+        sig_count_field = header_cursor.advance(SIGNAL_COUNT_FIELD)
         records = []
 
         for _ in range(int(sig_count_field)):
