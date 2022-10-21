@@ -1,4 +1,4 @@
-from node import create_node
+from node import create_node, NodeApiImpl
 from pool import create_poolbackend, sync_proc
 from multiprocessing import Process
 from blockstorageserver import BlockStorageServer
@@ -44,6 +44,16 @@ class TestSuit:
 
     def test_node(self):
         node_process(5050)
+
+    def test_node_parse_buffer(self):
+        buffer1 = "1666252618631419007304baa27ddfce27"
+        expected = "7ddfce27"
+
+        result = NodeApiImpl.parse_signal_id_from_buffer(buffer1)
+        print(result, expected)
+
+        assert result == expected
+
 
     def test_node_pool_handshake(self):
         nproc1 = Process(target=node_process, args=(5050,))

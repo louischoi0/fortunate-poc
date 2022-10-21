@@ -3,7 +3,7 @@ import threading
 from node import create_node, NodeApiImpl
 import socket
 from utils import get_logger, get_timestamp
-from utils import padding_msg_front, padding_msg
+from utils import padding_msg_front, padding_msg, strpshift
 from time import sleep
 from fortunate_system_const import *
 import leveldb
@@ -24,11 +24,7 @@ def sync_proc(backend):
             backend.logger.info(f"nodekey: {nodekey}")
             backend.sync_node_signal(nodekey)
 
-            # TODO should be flushed by another proc
-            backend.proc_flush_block()
-
         sleep(2.5)
-        #signals = pool.get_signals_from_node_pool("event0", 2)
 
 class PoolUUIDGenerator:
     def __init__(self):
@@ -74,9 +70,15 @@ class PoolBackend:
 
     def fork_proc_sync_nodes(self, *args, **kwargs):
         th = threading.Thread(target=sync_proc, args=(self,))
+        self.sync_node_thread = th
         PoolBackend.logger.info("Fork thread for sync node signals")
         th.start()
         return th
+
+    def terminate(self):
+        #self.sync_node_thread.exit()
+        pass
+
 
     def node_handshake(self, nodesock, *args, **kwargs):
         PoolBackend.logger.info("call:node_handshake.")
@@ -132,7 +134,7 @@ class PoolBackend:
         msg = padding_msg(msg, 256)
         msg = msg.encode("utf8")
 
-        logger.debug(f"call:sync_node_signal $nodeid: {nid},  $len:{len(msg)}")
+        logger.debug(f"call:get_node_signal $nodeid: {nid},  $len:{len(msg)}")
 
         nodesock.send(msg)
         response = nodesock.recv(8192)
@@ -143,23 +145,23 @@ class PoolBackend:
         assert recv_op_code == "@snsig"
         signal = response[6:]
 
-        signal_dict = NodeApiImpl.parse_signal(signal)
-        self.logger.info(f"signal dict: {signal_dict} from {signal}")
+        signal_obj = NodeApiImpl.parse_signal(signal)
+        self.logger.info(f"signal dict: {signal_obj} from {signal}")
         return signal
 
     def sync_node_signal(self, nid, *args, **kwargs):
         signal = self.get_node_signal(nid, *args, **kwargs)
-        self.pool.insert_signal(signal)
+        signal_id = NodeApiImpl.parse_signal_id_from_buffer(signal)
+        
+        if signal_id in self.pool.signal_bloomfilter: return
+        
+        self.pool.signal_bloomfilter[signal_id] = signal
 
-    def proc_flush_block(self):
+        signal = strpshift(signal, "02")
         sign_key = self.pool.sign_key
-        signals = self.pool.signal_chain[sign_key]
-
-        if len(signals) % 5 == 0:
-            self.write_block(sign_key)
-
-        if len(signals) % 10 == 0:
-            self.blockstorage_client.api.request_commit_block(sign_key)
+        
+        self.pool.insert_signal(signal)
+        #self.blockstorage_client.api.request_insert_block_row(sign_key, signal)
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
@@ -211,7 +213,8 @@ class PoolImpl:
         buffer += str(materialize_at)
 
         buffer += self.pool.sign_key
-        buffer = padding_msg(buffer, BLOCK_RECORD_LEN).encode('utf8')
+        buffer = padding_msg(buffer, BLOCK_RECORD_LEN)
+        buffer = strpshift(buffer, '00').encode('utf8')
 
         assert len(buffer) == BLOCK_RECORD_LEN
 
@@ -248,6 +251,20 @@ class Pool:
         self.selector = None
 
         self.backend = None
+
+        self.signal_bloomfilter = {}
+
+    def insert_event(self, event):
+        sign_key = self.sign_key
+
+        self.logger.debug("call event_signal")
+
+        if sign_key not in self.signal_chain:
+            self.logger.debug(f"initialize signal_chain sign_key: {sign_key} ")
+            self.signal_chain[sign_key] = [signal]
+        else:
+            self.logger.debug(f"insert event to {sign_key} : {event}")
+            self.signal_chain[sign_key].append(event)
 
     def insert_signal(self, signal):
         sign_key = self.sign_key

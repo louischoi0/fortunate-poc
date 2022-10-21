@@ -1,7 +1,7 @@
 from pool import Pool, PoolBackend
 from secrets import token_hex
 from fortunate_system_const import *
-from utils import get_timestamp, get_logger, padding_msg
+from utils import get_timestamp, get_logger, padding_msg, strpshift
 import hashlib
 from blockstorageserver import BlockStorageClient, BlockStorageServer
 from time import sleep
@@ -38,7 +38,6 @@ class FortunateEvent:
         buffer += self.sign_key
         buffer += self.event_hash
         buffer += str(get_timestamp())
-        buffer += "02"
 
         self.buffer = buffer
         return self.buffer
@@ -124,6 +123,7 @@ class FortunateServer:
             signals = self.pool.backend.get_signals_from_node_pool(event_hash, 2)
             response = self.impl.serialize_event_buffer(event, signals)
             response = padding_msg(response, BLOCK_RECORD_LEN)
+            response = strpshift(response, "01")
             self.blockstorage_client.api.request_insert_block_row(sign_key, response.encode('utf8'))
         
         self.logger.debug(f"api response: {response}")

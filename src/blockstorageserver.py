@@ -4,7 +4,7 @@ from utils import get_logger, get_timestamp, BufferCursor
 from multiprocessing import Process
 from time import sleep
 from fortunate_system_const import *
-from utils import padding_msg, padding_msg_front, verify_msg_optype
+from utils import padding_msg, padding_msg_front, verify_msg_optype, strpshift
 from leveldb import LevelDB
 
 
@@ -45,14 +45,27 @@ class BlockStorageClientImpl:
 
         return client_sock
 
-    def request_insert_block_row(self, sign_key, record_buffer, record_type="00", *args, **kwargs):
+    def request_get_block_finalized(self, sign_key, *args, **kwargs):
+        msg = "!gblcf"
+        msg += sign_key
+        msg = msg.encode('utf8')
+
+        self.client.sock.send(msg)
+        self.logger.debug(f"call:request_block_finalized - sign_key: {sign_key}")
+
+        response = self.client.sock.recv(8192*12)
+        return response
+
+    def request_insert_block_row(self, sign_key, record_buffer, *args, **kwargs):
+        if not type(record_buffer) == str:
+            record_buffer = record_buffer.decode('utf8')
+
         requested_at = get_timestamp()
 
         msg = "!addrc"
         msg += str(requested_at)
         msg += sign_key
-        msg += record_type
-        msg += record_buffer.decode("utf8")
+        msg += record_buffer
         msg = msg.encode("utf8")
 
         self.logger.debug(f"call:request_insert_block_row - data: {msg.decode('utf8')}")
@@ -84,6 +97,20 @@ class BlockStorageClientImpl:
 
         block_buffer = response_msg[6:]
         self.logger.debug(f"get block buffer.")
+
+    def request_commit_insert_block(self, sign_key, *args, **kwargs):
+        requested_at = get_timestamp()
+
+        msg = "!ciblc"
+        msg += str(requested_at)
+        msg += sign_key
+        msg = msg.encode("utf8")
+
+        self.logger.debug(f"call:request_commit_insert_block - sign_key: {sign_key}")
+        self.client.sock.send(msg)
+
+        response_msg = self.client.sock.recv(8192*8)
+        verify_msg_optype(response_msg, "@ciblc")
 
     def request_commit_block(self, sign_key, *args, **kwargs):
         requested_at = get_timestamp()
@@ -145,7 +172,6 @@ class BlockStorageServer:
             self.logger.debug(f"blockserver received msg: {msg}")
 
             self.call(blockclient_sock, msg)
-            sleep(1)
 
     def call(self, sock, request_msg):
         op_type = request_msg.decode("utf8")[:6]
@@ -160,6 +186,9 @@ class BlockStorageServer:
 
         elif op_type == "!cblck":
             self.reply_commit_block(sock, msg)
+        
+        elif op_type == "!gblcf":
+            self.reply_get_block_finalized(sock, msg)
 
     @classmethod
     def get_blockserver_sock(cls):
@@ -170,7 +199,27 @@ class BlockStorageServer:
 
         return blockserver_sock
 
-    def reply_commit_block(self, sock, msg, *args, **kwargs):
+    def reply_commit_insert_block(self, sock, msg, *args, **kwargs):
+        c = BufferCursor(msg)
+
+        ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
+        sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
+
+        record_block = self.blockmap[sign_key]
+        block_buffer = BlockStorageImpl.serialize_block((sign_key, record_block))
+        
+        old_data = self.db.Get(sign_key.encode('utf8'))
+        block_buffer = old_data + block_buffer
+
+        self.db.Put(sign_key.encode("utf8"), block_buffer)
+        del self.blockmap[sign_key] # flush block in memory.
+
+        response = "@ciblc"
+        response = response.encode("utf8")
+
+        sock.send(response)
+
+    def reply_commit_block(self, sock, msg, *args, **kwargs): # overwrite
         c = BufferCursor(msg)
 
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
@@ -180,8 +229,9 @@ class BlockStorageServer:
         block_buffer = BlockStorageImpl.serialize_block((sign_key, record_block))
 
         self.db.Put(sign_key.encode("utf8"), block_buffer)
+        del self.blockmap[sign_key] # flush block in memory.
 
-        response = "@rblck"
+        response = "@cblck"
         response = response.encode("utf8")
 
         sock.send(response)
@@ -193,13 +243,12 @@ class BlockStorageServer:
         ts = c.advance(TIMESTAMP_STR_LEN).decode("utf8")
         sign_key = c.advance(POOL_SIGN_KEY_LEN).decode("utf8")
 
-        record = True
-
-        self.logger.debug(
-            f"call: reply_insert_block_row - sign_key: {sign_key}, record: {record}"
-        )
 
         record = c.advance(256).decode("utf8")
+
+        self.logger.debug(
+            f"call: reply_insert_block_row - sign_key: {sign_key}, record_type: {record[:2]}, record: {record[2:]}"
+        )
 
         while record and len(record) == 256:
     
@@ -209,8 +258,6 @@ class BlockStorageServer:
                 self.blockmap[sign_key] = [record]
 
             record = c.advance(256).decode("utf8")
-
-        #print(self.blockmap[sign_key])
 
         response = "@addrc".encode("utf8")
         self.logger.debug(
@@ -233,6 +280,22 @@ class BlockStorageServer:
 
         sock.send(response)
 
+    def reply_get_block_finalized(self, sock, msg, *args, **kwargs):
+        self.logger.info(f"call: reply_get_block_finalized from msg: {msg}")
+
+        c = BufferCursor(msg)
+        sign_key = c.advance(POOL_SIGN_KEY_LEN)
+        
+        self.logger.info(f"get block from database - sign key: {sign_key}")
+        block_buffer = self.db.Get(sign_key.encode('utf8'))
+        block_length = str(len(block_buffer) / 256)
+    
+        response = "@gblcf"
+        response += padding_msg_front(block_length, BLOCK_RECORD_COUNT_FLAG_LEN)
+        response = response.encode('utf8')
+        response += block_buffer
+
+        sock.send(response)
 
 class BlockStorageImpl:
     @classmethod
@@ -241,6 +304,7 @@ class BlockStorageImpl:
         serialized_at = get_timestamp()
         
         buffer = ""
+
         """
         buffer += str(serialized_at)
         buffer += sign_key

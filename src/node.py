@@ -101,7 +101,6 @@ class NodeBackend:
                     f"node#{self.port} received msg: {msg.decode('utf8')}"
                 )
                 self.api.call(pool_id, pool_socket, msg)
-                sleep(3)
 
             pool_socket.close()
 
@@ -156,15 +155,11 @@ class NodeApiImpl:
         cursor = BufferCursor(buffer)
         signal_id = cursor.advance(NODE_SIGNAL_ID_LEN)
         ts =  cursor.advance(TIMESTAMP_STR_LEN)
-        record_type = cursor.advance(RECORD_TYPE_FLAG_LEN)
         node_id = cursor.advance(NODE_ID_LEN)
         flags = cursor.advance(NODE_FLAG_FIELD_LEN)
 
-        assert record_type == "01"
-
         return {
             "signal_id": signal_id,
-            "record_type": record_type,
             "ts": ts,
             "node_id": node_id,
             "flags": flags
@@ -176,16 +171,15 @@ class NodeApiImpl:
 
     @classmethod
     def parse_signal_id_from_buffer(self, buffer):
-        signal_id = buffer[:NODE_SIGNAL_ID_LEN]
+        signal_id = buffer[TIMESTAMP_STR_LEN: TIMESTAMP_STR_LEN+NODE_SIGNAL_ID_LEN]
         return signal_id
 
     def reply_sync_node_signal(self, sock, pool_id, request_msg, *args, **kwargs):
         np_connection = self.backend.poolconnectionmap[pool_id]
 
         msg = "@snsig"                      #
-        msg += self.node.signal_id          # 8
         msg += get_timestamp()              #
-        msg += "01"                         #
+        msg += self.node.signal_id          # 8
         msg += str(self.node._id)           #
         assert self.node._id is not None    
         # msg += "0" * NODE_REGISTER_ID_LEN #TODO
@@ -283,6 +277,9 @@ class Node:
         self.logger.info(f"node#{self.node_id} start node-app thread.")
         self.daemon_thread = th
         th.start()
+
+    def terminate(self):
+        self.daemon_thread.exit()
 
 class Simulator:
     def __init__(self):

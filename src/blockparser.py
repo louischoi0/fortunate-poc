@@ -11,58 +11,65 @@ class BlockParser:
     @classmethod
     def parse_signal_tail_buffer(cls, tail):
         cursor = BufferCursor(tail)
+        
+        signal_id = cursor.advance(NODE_SIGNAL_ID_LEN)
         node_id = cursor.advance(NODE_ID_LEN)
-
-        # node_register_id = scursor.advance(NODE_REGISTER_ID_LEN)
         node_flag_field = cursor.advance(NODE_FLAG_FIELD_LEN)
         detail = cursor.rest()
         
         return {
+            "singal_id": signal_id,
             "node_id": node_id,
-            "node_flag_field": node_flag_field,
-            #"detail": detail,
+            "flag_field": node_flag_field,
         }
     
     @classmethod
-    def parse_event_tail_buffer(cls, tail):
-        cursor = BufferCursor(tail)
-        buffer = cursor.advance(NODE_ID_LEN)
-        nodes = []
-        for i in range(2):
-            nodes.append(buffer)
-            buffer = cursor.advance(NODE_ID_LEN)
+    def parse_event_tail_buffer(cls, record_buffer):
+        cursor = BufferCursor(record_buffer)
 
-        return {
-            "nodes": nodes
-        }
+        sign_key = cursor.advance(POOL_SIGN_KEY_LEN)
+        event_hash = cursor.advance(EVENT_HASH_LEN)
         
+        serialized_at = cursor.advance(TIMESTAMP_STR_LEN)
+
+        signals = [] 
+        node_sig = cursor.advance(NODE_SIGNAL_ID_LEN)
+
+        while node_sig != "00000000":
+            signals.append(node_sig)
+            node_sig = cursor.advance(NODE_SIGNAL_ID_LEN)
+        
+        return {
+            "sign_key": sign_key,
+            "event_hash": event_hash,
+            "serialized_at": serialized_at,
+            "signals": signals,
+        }
     
     @classmethod
     def parse_record(cls, record_buffer):
         scursor = BufferCursor(record_buffer)
-        print(scursor.buffer)
         #sign_key = scursor.advance(POOL_SIGN_KEY_LEN)
 
-        record_secondary_id = scursor.advance(NODE_SIGNAL_ID_LEN)
-        record_secondary_ts = scursor.advance(TIMESTAMP_STR_LEN)
-        record_secondary_ts = unix_timestamp_to_ts(record_secondary_ts)
-
         record_type = scursor.advance(RECORD_TYPE_FLAG_LEN)
+        ts = scursor.advance(TIMESTAMP_STR_LEN)
 
         header = {
-            "sign_key": '',
-            "record_secondary_id": record_secondary_id,
-            "record_secondary_ts": record_secondary_ts,
             "record_type": record_type,
+            "ts": pd.Timestamp(int(ts)*10),
         }
 
         tail_buffer = scursor.rest()
 
-        if record_type == "01":
+        if record_type == "02":
             d = cls.parse_signal_tail_buffer(tail_buffer)
         
-        elif record_type == "02":
+        elif record_type == "01":
             d = cls.parse_event_tail_buffer(tail_buffer)
+
+        elif record_type == "00":
+            d = {}
+
         else:
             d = {}
         
@@ -73,27 +80,14 @@ class BlockParser:
         block = block.decode("utf8")
         bcursor = BufferCursor(block)
         buffer = bcursor.advance(256)
-        print(buffer)
-        while buffer and len(buffer) == 256:
-            buffer = bcursor.advance(256)
-            print(buffer)
-        return 
-
-        header_cursor = BufferCursor(bcursor.advance(256))
-
-        block_ts = header_cursor.advance(TIMESTAMP_STR_LEN)
-        pool_sign_key = header_cursor.advance(POOL_SIGN_KEY_LEN)
-
-        sig_count_field = header_cursor.advance(SIGNAL_COUNT_FIELD)
         records = []
 
-        for _ in range(int(sig_count_field)):
-            record_buffer = bcursor.advance(BLOCK_RECORD_LEN)
-            record = cls.parse_record(record_buffer)
-            records.append(record)
-
-        return block_ts, pool_sign_key, records
-
+        while buffer and len(buffer) == 256:
+            record = cls.parse_record(buffer)
+            records.append(record) 
+            buffer = bcursor.advance(256)
+        
+        return records
 
 if __name__ == "__main__":
     sign_key = "abcdefge"
@@ -102,8 +96,15 @@ if __name__ == "__main__":
     block = db.Get(sign_key.encode())
 
     bp = BlockParser()
+    records = bp.parse(block)
+
+    for r in records:
+        print(r)
+
+    """
     block_ts, pool_sign_key, signals = bp.parse(block)
     print(block_ts, pool_sign_key)
 
     for s in signals:
         print(s)
+    """
