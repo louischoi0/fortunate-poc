@@ -45,7 +45,7 @@ class BlockStorageClientImpl:
 
         return client_sock
 
-    def request_get_block_finalized(self, sign_key, *args, **kwargs):
+    def _request_get_block_finalized(self, sign_key, *args, **kwargs):
         msg = "!gblcf"
         msg += sign_key
         msg = msg.encode('utf8')
@@ -54,7 +54,21 @@ class BlockStorageClientImpl:
         self.logger.debug(f"call:request_block_finalized - sign_key: {sign_key}")
 
         response = self.client.sock.recv(8192*12)
+        
+        assert response[:6].decode('utf8') == "@gblcf"
+
         return response
+
+    def get_blockbuffer_finalized(self, sign_key, *args, **kwargs):
+        msg = self._request_get_block_finalized(sign_key)
+        
+        cursor = BufferCursor(msg)
+        _ = cursor.advance(OP_PREFIX_LEN)
+
+        length = cursor.advance(BLOCK_RECORD_COUNT_FLAG_LEN).decode('utf8')
+        length = int(length) 
+
+        return length, cursor.rest().decode('utf8')
 
     def request_insert_block_row(self, sign_key, record_buffer, *args, **kwargs):
         if not type(record_buffer) == str:
@@ -287,8 +301,8 @@ class BlockStorageServer:
         sign_key = c.advance(POOL_SIGN_KEY_LEN)
         
         self.logger.info(f"get block from database - sign key: {sign_key}")
-        block_buffer = self.db.Get(sign_key.encode('utf8'))
-        block_length = str(len(block_buffer) / 256)
+        block_buffer = self.db.Get(sign_key)
+        block_length = str(int(len(block_buffer) / 256))
     
         response = "@gblcf"
         response += padding_msg_front(block_length, BLOCK_RECORD_COUNT_FLAG_LEN)

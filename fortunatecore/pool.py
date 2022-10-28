@@ -57,14 +57,15 @@ class PoolBackend:
 
         return node_sock
 
-    def ready(self):
+    def make_node_connections(self, ports):
         ip = "127.0.0.1"
 
-        addr0 = (ip, 5050)
-        self.make_node_connection(addr0)
-
-        addr1 = (ip, 5051)
-        self.make_node_connection(addr1)
+        for port in ports:
+            addr0 = (ip, port)
+            self.make_node_connection(addr0)
+        
+    def ready(self, ports=(5050, 5051)):
+        self.make_node_connections(ports)
 
         return self.fork_proc_sync_nodes()
 

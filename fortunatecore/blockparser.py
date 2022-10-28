@@ -18,19 +18,20 @@ class BlockParser:
         detail = cursor.rest()
         
         return {
-            "singal_id": signal_id,
+            "signal_id": signal_id,
             "node_id": node_id,
             "flag_field": node_flag_field,
         }
     
     @classmethod
-    def parse_event_tail_buffer(cls, record_buffer):
+    def parse_tf_event_tail_buffer(cls, record_buffer):
         cursor = BufferCursor(record_buffer)
 
         sign_key = cursor.advance(POOL_SIGN_KEY_LEN)
         event_hash = cursor.advance(EVENT_HASH_LEN)
         
         serialized_at = cursor.advance(TIMESTAMP_STR_LEN)
+        state = cursor.advance(1)
 
         signals = [] 
         node_sig = cursor.advance(NODE_SIGNAL_ID_LEN)
@@ -42,6 +43,7 @@ class BlockParser:
         return {
             "sign_key": sign_key,
             "event_hash": event_hash,
+            "state": state,
             "serialized_at": serialized_at,
             "signals": signals,
         }
@@ -65,7 +67,7 @@ class BlockParser:
             d = cls.parse_signal_tail_buffer(tail_buffer)
         
         elif record_type == "01":
-            d = cls.parse_event_tail_buffer(tail_buffer)
+            d = cls.parse_tf_event_tail_buffer(tail_buffer)
 
         elif record_type == "00":
             d = {}
@@ -83,6 +85,7 @@ class BlockParser:
         records = []
 
         while buffer and len(buffer) == 256:
+            print(buffer)
             record = cls.parse_record(buffer)
             records.append(record) 
             buffer = bcursor.advance(256)

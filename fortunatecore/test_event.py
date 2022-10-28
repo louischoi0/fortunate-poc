@@ -54,12 +54,18 @@ class EventTestSuit:
 
         p1 = Process(target=_runnode, args=(5051,))
         p1.start()
+
+        p2 = Process(target=_runnode, args=(5062,))
+        p2.start()
+
+        p3 = Process(target=_runnode, args=(5063,))
+        p3.start()
         
         sleep(3)
 
         server = FortunateServer()
 
-        poolproc = server.init_server()
+        poolproc = server.init_server((5050,5051, 5062, 5063))
         server.connect_block_server()
 
         event_thread = threading.Thread(target=request_event_thread, args=(server,))
@@ -68,8 +74,8 @@ class EventTestSuit:
         poolbackend = server.pool.backend
 
         for _ in range(10):
-            poolbackend.sync_node_signal(0)
-            poolbackend.sync_node_signal(1)
+            for i in range(3):
+                poolbackend.sync_node_signal(i)
             sleep(0.5)        
 
 
@@ -80,7 +86,10 @@ class EventTestSuit:
         poolbackend.terminate()
         p0.terminate()
         p1.terminate()
+        p2.terminate()
+        p3.terminate()
         blockserverproc.terminate()
+
         global NODES
         for n in NODES:
             n.terminate()

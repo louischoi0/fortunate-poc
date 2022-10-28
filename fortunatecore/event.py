@@ -7,6 +7,14 @@ from blockstorageserver import BlockStorageClient, BlockStorageServer
 from time import sleep
 from multiprocessing import Process
 from node import NodeApiImpl
+from functools import reduce
+
+
+class FBuffer:
+    def __init__(self, buffer=""):
+        self.buffer = ""
+
+    
 
 
 class FortunateEvent:
@@ -27,11 +35,12 @@ class FortunateEvent:
 
         self.event_primary_type = event_type
         self.event_secondary_type = event_secondary_type
-
+        
         self.sign_key = sign_key
-
+        
         self.buffer = buffer
         self.requested_at = requested_at
+
 
     def serialize_header(self, *args, **kwargs):
         buffer = str(self.created_at)
@@ -68,14 +77,15 @@ class FortunateServerImpl:
     def create_event(self, *args, **kwargs):
         pass
 
-    def serialize_event_buffer(self, event, signals, *args, **kwargs):
-        header = event.serialize_header()
-        payload = ""
+    def serialize_event_buffer(self, event, signals, header_attach="", *args, **kwargs):
+        event_header = event.serialize_header()
+        payload = header_attach + ""
 
         for signal in signals:
             payload += NodeApiImpl.parse_signal_id_from_buffer(signal)
 
-        return event.attach_event_payload(payload) 
+        payload = payload
+        return event.attach_event_payload(payload).encode('utf8')
     
 
 class FortunateServer:
@@ -93,7 +103,7 @@ class FortunateServer:
     def connect_block_server(self):
         self.blockstorage_client = BlockStorageClient.get_client("fortunate_server")
 
-    def init_server(self, *args, **kwargs):
+    def init_server(self, ports, *args, **kwargs):
         self.connect_block_server()
 
         p = Pool()
@@ -105,7 +115,7 @@ class FortunateServer:
         self.pool_backend = backend
 
         self.impl = FortunateServerImpl(self.pool)
-        return backend.ready()
+        return backend.ready(ports)
 
     def api(self, event_request, *args, **kwargs):
         sign_key = self.pool.sign_key
@@ -116,19 +126,41 @@ class FortunateServer:
         requested_at = get_timestamp()
         
         self.logger.info(f"create event: event_hash: {event_hash}, event_type: {event_type}, signkey: {sign_key}, ")
-        event = FortunateEvent(event_hash, event_type, event_secondary_type, sign_key)
         sign_key = self.pool.sign_key
 
-        if event_type == "tf" and event_secondary_type == "1;4":
-            signals = self.pool.backend.get_signals_from_node_pool(event_hash, 2)
-            response = self.impl.serialize_event_buffer(event, signals)
-            response = padding_msg(response, BLOCK_RECORD_LEN)
-            response = strpshift(response, "01")
+        if event_type == "tf" :
+            response = self.tf_api(sign_key, event_hash, event_secondary_type)
             self.blockstorage_client.api.request_insert_block_row(sign_key, response.encode('utf8'))
         
         self.logger.debug(f"api response: {response}")
         return response
 
+    def tf_api(self, sign_key, event_hash, secondary_type, *args, **kwargs):
+        event = FortunateEvent(event_hash, "tf", secondary_type, sign_key)
+
+        if secondary_type == "1;4":
+            signals = self.pool.backend.get_signals_from_node_pool(event_hash, 2)
+            
+            state = self.and_op_flag(signals, 0)
+            state = "1" if state else "0"
+
+            response = self.impl.serialize_event_buffer(event, signals, header_attach=state)
+            response = response.decode('utf8')
+
+            response = padding_msg(response, BLOCK_RECORD_LEN)
+            response = strpshift(response, "01")
+
+            self.blockstorage_client.api.request_insert_block_row(sign_key, response.encode('utf8'))
+            return response
+    
+    @classmethod
+    def and_op_flag(cls,signals, flag_index, *args, **kwargs):
+        flags = [*map(lambda x: NodeApiImpl.parse_signal(x)["flags"], signals)]
+        for flag in flags:
+            for f in flag:
+                assert f in ( "0", "1" )
+        
+        return reduce(lambda y, x: bool(int(x[flag_index])) and y, flags, True)
 
     def trigger_event(self, event_type, event_secondary_type, *args, **kwargs):
         sign_key = self.pool.sign_key

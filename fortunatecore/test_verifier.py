@@ -1,6 +1,8 @@
 import fire
 from blockstorageserver import BlockStorageServer
-from blockverifier import Verifier
+from blockverifier import BlockVerifier
+from multiprocessing import Process
+from time import sleep
 
 def _runblockstorageserver():
     bss = BlockStorageServer()
@@ -11,13 +13,12 @@ def _runblockstorageserver():
 class VerifierTestSuit:
     def test_verifier(self):
         blockserverproc = Process(target=_runblockstorageserver)
-        PROCS.append(blockserverproc)
         blockserverproc.start()
 
         sleep(1.4)
         
-        v = Verifier() 
-        v.verify_event('abcdefge') 
+        v = BlockVerifier() 
+        v.verify_block('abcdefge')
 
 
 
