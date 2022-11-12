@@ -7,6 +7,10 @@ from fortunate_system_const import *
 from utils import padding_msg, padding_msg_front, verify_msg_optype, strpshift
 from leveldb import LevelDB
 
+class FortunateBlock:
+    def __init__(self, raw_buffer):
+        pass
+
 
 class BlockStorageClient:
     logger = get_logger("BlockStorageClient")
@@ -318,15 +322,6 @@ class BlockStorageImpl:
         serialized_at = get_timestamp()
         
         buffer = ""
-
-        """
-        buffer += str(serialized_at)
-        buffer += sign_key
-        counts = len(record_block)
-
-        sig_count_field = padding_msg_front(str(counts), SIGNAL_COUNT_FIELD)
-        buffer += sig_count_field
-        """
 
         for record in record_block:
             record = padding_msg(record, BLOCK_RECORD_LEN)

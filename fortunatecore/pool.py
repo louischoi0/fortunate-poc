@@ -150,7 +150,13 @@ class PoolBackend:
         self.logger.info(f"signal dict: {signal_obj} from {signal}")
         return signal
 
+    def sync_node_signal_all(self, *args, **kwargs):
+        for i, n in enumerate(nodes):
+            self.sync_node_signal(i)
+
     def sync_node_signal(self, nid, *args, **kwargs):
+        self.pool.acquire_sign_key_lock()
+        
         signal = self.get_node_signal(nid, *args, **kwargs)
         signal_id = NodeApiImpl.parse_signal_id_from_buffer(signal)
         
@@ -161,8 +167,10 @@ class PoolBackend:
         signal = strpshift(signal, "02")
         sign_key = self.pool.sign_key
         
+        self.pool.release_sign_key_lock()
         self.pool.insert_signal(signal)
         #self.blockstorage_client.api.request_insert_block_row(sign_key, signal)
+
 
     def write_block(self, sign_key):
         buffer = self.pool.impl.serialize_chain()
@@ -203,8 +211,13 @@ class PoolImpl:
     def proc_block_fush(self):
         while True:
             sleep(1)
-
+    
+    def update_sign_key(self, sign_key, *args, **kwargs):
+        pass
+        
+    
     def serialize_chain(self):
+        self.pool.acquire_sign_key_lock()
         sign_key = self.pool.sign_key
         materialize_at = get_timestamp()
 
@@ -224,6 +237,7 @@ class PoolImpl:
             buffer += signal.encode("utf8")
 
         assert len(buffer) % BLOCK_RECORD_LEN == 0
+        self.pool.release_sign_key_lock()
         return buffer
 
     def get_node_indicies(self, event_hash, num, node_cnt):
@@ -255,6 +269,38 @@ class Pool:
 
         self.signal_bloomfilter = {}
 
+        self.sign_key_lock = threading.Lock()
+        self.previous_sign_key = None
+
+    def acquire_sign_key_lock(self):
+        self.logger.info(f"acquire sign key lock")
+        return
+        return self.sign_key_lock.acquire()
+
+    def release_sign_key_lock(self):
+        self.logger.info(f"release sign key lock")
+        return
+        return self.sign_key_lock.release()
+
+    def update_sign_key(self, new_sign_key, *args, **kwargs):
+        self.acquire_sign_key_lock()
+        self.previous_sign_key = self.sign_key
+
+        self.sign_key = new_sign_key
+        self.pool.signal_bloomfilter = {}
+
+        self.impl.update_sign_key(new_sign_key)
+        
+        self.release_sign_key_lock()
+    
+    def allocate_new_block(new_sign_key):
+        """
+        This method must be called after commit previous block.
+        """
+        self.logger.info(f"allocate new block - sign_key: {new_sign_key}")
+        self.update_sign_key(new_sign_key)
+        self.sync_node_signal_all()
+
     def insert_event(self, event):
         sign_key = self.sign_key
 
@@ -269,7 +315,6 @@ class Pool:
 
     def insert_signal(self, signal):
         sign_key = self.sign_key
-        #self.sign_key_published_at = get_timestamp()
         
         self.logger.debug("call insert_signal")
 
@@ -284,7 +329,7 @@ class Pool:
         self.impl = PoolImpl(self)
 
         self.nodes = []
-        self.sign_key = self.sign_key or "abcdefge"
+        self.sign_key = self.sign_key
 
         self._id = PoolUUIDGenerator.getid()
         self.selector = NodeSelector(self.sign_key)
@@ -318,8 +363,8 @@ class Pool:
             return self.gte(nodes, "1/3", 1)
 
 
-def create_poolbackend():
-    p = Pool()
+def create_poolbackend(sign_key):
+    p = Pool(sign_key=sign_key)
     p.init_pool()
     backend = PoolBackend(p)
     backend.init_backend()
@@ -327,4 +372,4 @@ def create_poolbackend():
 
 
 if __name__ == "__main__":
-    create_poolbackend()
+    create_poolbackend('aaaabbbb')

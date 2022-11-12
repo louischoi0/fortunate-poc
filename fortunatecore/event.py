@@ -103,10 +103,10 @@ class FortunateServer:
     def connect_block_server(self):
         self.blockstorage_client = BlockStorageClient.get_client("fortunate_server")
 
-    def init_server(self, ports, *args, **kwargs):
+    def init_server(self, node_ports, sign_key, *args, **kwargs):
         self.connect_block_server()
 
-        p = Pool()
+        p = Pool(sign_key)
         p.init_pool()
         backend = PoolBackend(p)
         backend.init_backend()
@@ -115,7 +115,7 @@ class FortunateServer:
         self.pool_backend = backend
 
         self.impl = FortunateServerImpl(self.pool)
-        return backend.ready(ports)
+        return backend.ready(node_ports)
 
     def api(self, event_request, *args, **kwargs):
         sign_key = self.pool.sign_key

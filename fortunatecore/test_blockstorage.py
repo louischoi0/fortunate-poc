@@ -10,7 +10,7 @@ from blockstorageserver import BlockStorageServer
 PROCS = []
 
 def get_poolbackend():
-    backend = create_poolbackend()
+    backend = create_poolbackend('aaaabbbb')
     return backend
 
 def _runnode(port):

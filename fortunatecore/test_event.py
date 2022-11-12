@@ -65,7 +65,7 @@ class EventTestSuit:
 
         server = FortunateServer()
 
-        poolproc = server.init_server((5050,5051, 5062, 5063))
+        poolproc = server.init_server((5050,5051, 5062, 5063), 'bbbbcccc')
         server.connect_block_server()
 
         event_thread = threading.Thread(target=request_event_thread, args=(server,))
@@ -77,7 +77,15 @@ class EventTestSuit:
             for i in range(3):
                 poolbackend.sync_node_signal(i)
             sleep(0.5)        
+        
+        self.poolbackend.pool.allocate_new_block('ccccdddd')
 
+        for _ in range(10):
+            for i in range(3):
+                poolbackend.sync_node_signal(i)
+            sleep(0.5)        
+
+        request_event_thread(server)
 
         poolbackend.write_block(poolbackend.pool.sign_key)
         server.blockstorage_client.api.request_commit_block(server.pool.sign_key)

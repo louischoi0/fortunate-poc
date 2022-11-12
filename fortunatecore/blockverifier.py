@@ -9,7 +9,6 @@ from functools import reduce
 from utils import get_logger
 
 
-
 class BlockVerifier:
 
     def __init__(self, *args, **kwargs):

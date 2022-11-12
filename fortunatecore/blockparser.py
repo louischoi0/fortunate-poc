@@ -6,6 +6,15 @@ import pandas as pd
 def unix_timestamp_to_ts(t):
     return pd.Timestamp(int(t) * 10)
 
+
+class FortunateBlock:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def from_raw_buffer(self, raw_buffer):
+        pass
+
 class BlockParser:
     
     @classmethod
@@ -81,7 +90,16 @@ class BlockParser:
     def parse(cls, block):
         block = block.decode("utf8")
         bcursor = BufferCursor(block)
+        """
+        parent_block_key = bcursor.advance(BLOCK_SIGN_KEY_LEN)
+        block_index = bcursor.advance(BLOCK_INDEX_FIELD_LEN)
+        header_payload = bcursor.advance(BLOCK_HEADER_LEN - (BLOCK_SIGN_KEY_LEN + BLOCK_INDEX_FIELD_LEN))
+        
+        print(parent_block_key, block_index, header_payload)
+        """
+
         buffer = bcursor.advance(256)
+
         records = []
 
         while buffer and len(buffer) == 256:
