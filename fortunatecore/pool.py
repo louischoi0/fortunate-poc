@@ -155,7 +155,6 @@ class PoolBackend:
             self.sync_node_signal(i)
 
     def sync_node_signal(self, nid, *args, **kwargs):
-        self.pool.acquire_sign_key_lock()
         
         signal = self.get_node_signal(nid, *args, **kwargs)
         signal_id = NodeApiImpl.parse_signal_id_from_buffer(signal)
@@ -167,7 +166,6 @@ class PoolBackend:
         signal = strpshift(signal, "02")
         sign_key = self.pool.sign_key
         
-        self.pool.release_sign_key_lock()
         self.pool.insert_signal(signal)
         #self.blockstorage_client.api.request_insert_block_row(sign_key, signal)
 
@@ -274,12 +272,10 @@ class Pool:
 
     def acquire_sign_key_lock(self):
         self.logger.info(f"acquire sign key lock")
-        return
         return self.sign_key_lock.acquire()
 
     def release_sign_key_lock(self):
         self.logger.info(f"release sign key lock")
-        return
         return self.sign_key_lock.release()
 
     def update_sign_key(self, new_sign_key, *args, **kwargs):

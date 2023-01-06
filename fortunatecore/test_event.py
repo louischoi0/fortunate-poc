@@ -78,13 +78,7 @@ class EventTestSuit:
                 poolbackend.sync_node_signal(i)
             sleep(0.5)        
         
-        self.poolbackend.pool.allocate_new_block('ccccdddd')
-
-        for _ in range(10):
-            for i in range(3):
-                poolbackend.sync_node_signal(i)
-            sleep(0.5)        
-
+        poolbackend.pool.allocate_new_block('ccccdddd')
         request_event_thread(server)
 
         poolbackend.write_block(poolbackend.pool.sign_key)
