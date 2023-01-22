@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use tokio::time::{sleep, Duration};
 use rand::Rng;
-use std::{thread, time};
 use log::{debug, error, info, trace, warn};
+use redis::Commands;
 
-use crate::dynamoc;
+use crate::sessions::RedisImpl;
+use crate::{dynamoc, matrix};
+use crate::matrix::ObjectSession;
 use crate::tsgen;
 use crate::tsgen::TsEpochPair;
 use crate::flog::FortunateLogger;
@@ -68,9 +71,9 @@ pub struct NodeSignalKey {
   pub signal_key: std::string::String,
   pub epoch: std::string::String,
   pub ts: tsgen::Timestamp,
-  pub flags: std::string::String,
 }
 
+  /**
 impl NodeSignalKey {
   pub fn and(&self, other: &NodeSignalKey, flagidx: usize) -> bool {
     let a = String::from(self.flags.chars().nth(flagidx).unwrap()).parse::<u8>().unwrap();
@@ -82,11 +85,20 @@ impl NodeSignalKey {
   pub fn at(&self, flagidx: usize) -> bool {
     !(String::from(self.flags.chars().nth(flagidx).unwrap()).parse::<u8>().unwrap() == 0)
   }
+}
+  */
 
+trait INodeSignal {
+  fn signalkey(&self) -> String;
+}
+
+enum SignalType {
+  BITARR(NodeSignalBitArr),
+  NUMERIC(),
 }
 
 #[derive(std::clone::Clone, Debug)]
-pub struct NodeSignal {
+pub struct NodeSignalBase {
   pub epoch: std::string::String,
   pub signal_key: std::string::String,
   pub group: std::string::String,
@@ -96,35 +108,60 @@ pub struct NodeSignal {
   pub data: std::option::Option<String>,
 }
 
+pub struct NodeSignalBitArr {
+  pub base: NodeSignalBase,
+  pub flags: String,
+}
+
+pub struct NodeSignalNumeric<T> {
+  pub base: NodeSignalBase,
+  pub seed: T,
+}
+
+trait BitOp<T> {
+  fn and(&self, other: T) -> bool;
+}
+
+trait BitReduceOp<T> {
+  fn and(v: Vec<&T>) -> bool;
+}
+
+impl BitOp<NodeSignalBitArr> for NodeSignalBitArr  {
+  fn and(&self, other: NodeSignalBitArr) -> bool {
+    true
+  }
+}
 
 
-impl NodeSignal {
+
+impl NodeSignalBase {
 
   pub fn parse_key(d: &String) -> NodeSignalKey {
-    let mut cursor = Cursor::new(d.to_owned());
+    let mut cursor = Cursor::new(d);
 
     let epoch = cursor.advance(6);
     let ts = tsgen::Timestamp::from_str(&cursor.advance(16));
-
-    let flags = cursor.advance(4);
 
     NodeSignalKey { 
       signal_key: d[0..d.len()-4].to_string(),
       epoch:epoch, 
       ts: ts, 
-      flags: flags
     }
   }
 }
 
 
-#[derive(Debug)]
 pub struct FNode {
-  uuid: String,
-  host: String,
+  pub uuid: String,
+  pub host: String,
+
+  pub region: String, 
+  node_type: String,
   
   flags_s: u16,
   pub flagset: FlagSet,
+  pub session: crate::matrix::ObjectSession,
+
   flagset_updated_ts: u16,
 
   seed: u16,
@@ -141,35 +178,48 @@ pub struct FNode {
   logger: FortunateLogger,
 }
 
+
 impl FNode{
   /**
   pub async fn get_node_signals(client: &Client, epoch: &std::string::String) -> Vec<NodeSignalKey> {
 
   } */
 
+
   pub async fn get_node_s_signals(client: &Client, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
-    let mut q = HashMap::<String,String>::new();
     let _nodesignal_dimpl = dynamoc::DynamoHandler::nodesignal();
 
-    q.insert(String::from("table_name"), String::from("node_signals"));
-    q.insert(String::from("key_column"), String::from("epoch"));
-    q.insert(String::from("query_value"), epoch.to_owned());
+    let qctx = crate::dynamoc::DynamoSelectQueryContext {
+      table_name: &"events",
+      conditions: vec! [
+      ],
+      query_subtype: dynamoc::DynamoSelectQuerySubType::All
+    };
 
-    let items = _nodesignal_dimpl.query(client, q).await.unwrap();
+    let items = 
+        _nodesignal_dimpl.q(
+        &client, 
+        &qctx
+      ).await.unwrap();
 
-    let items_u = items.unwrap();
-
-    for v in items_u.iter() {
-      let data = v.get(&String::from("data"));
+    match items {
+      dynamoc::SelectQuerySetResult::All(x) => x.unwrap(),
+      _ => panic!("invalid select operation type.")
     }
-
-    items_u
   }
 
   pub async fn new(uuid: String) -> Self {
+
+    //TODO make function mapping to region based on statics
+    let region = std::string::String::from("northeast-1"); 
+
     return FNode {
-      uuid: uuid,
+      uuid: uuid.to_owned(),
       host: String::from("localhost"),
+
+      region: region,
+      node_type: std::string::String::from("SN"),
+
       flags_s: 0,
       flagset: FlagSet::new(),
       flagset_updated_ts: 0,
@@ -181,34 +231,24 @@ impl FNode{
       group_hash: String::from(""),
       dynamo_client: dynamoc::get_dynamo_client().await,
 
+      session: ObjectSession::new(uuid, String::from("N")),
       logger: FortunateLogger::new(String::from("node")),
     }
   } 
 
-  fn init_kernels(&mut self) {
-    self.kernels.push(FlagKernal::new(|x:u32|  x & 1 ));
-    self.kernels.push(FlagKernal::new(|x:u32|  x & 2 ));
-    self.kernels.push(FlagKernal::new(|x:u32|  x & 4 ));
-    self.kernels.push(FlagKernal::new(|x:u32|  x & 8 ));
-    self.kernels.push(FlagKernal::new(|x:u32|  x & 16 ));
-  }
-
   pub fn update(&mut self) {
     let mut rng = rand::thread_rng();
-    //self.flagset_updated_ts = tsgen::unix_epoch();
 
     self.seed = rng.gen::<u16>();
     self.update_flag();
   }
 
-  pub fn make_signal(&self) -> NodeSignal {
-    let mut data = HashMap::<String, String>::new();
-
+  pub fn make_signal(&self) -> NodeSignalBase {
     let tspair = tsgen::get_ts_pair();
     let TsEpochPair {ts, epoch} = tspair;
     let nodedata = String::from(&epoch) + &ts + &self.flagset.to_string();
 
-    NodeSignal { 
+    NodeSignalBase { 
       epoch: epoch.to_owned(), 
       signal_key: epoch + &ts, 
       group: String::from(""), 
@@ -218,7 +258,22 @@ impl FNode{
     }
   }
 
-  pub async fn insert_node_signal(&self) -> Result<(), Error>{
+  pub fn get_node_session(imp: &mut RedisImpl, nodeid: &std::string::String) -> HashMap<String, String> {
+    let mut data = HashMap::<String, String>::new();
+
+    data.insert(
+      std::string::String::from("last_signal_emitted"),
+      imp.redis_connection.get::<String, String>(
+        std::string::String::from(
+          format!("{}:last_signal_emitted", nodeid)
+        )
+      ).unwrap() 
+    );
+
+    data
+  }
+
+  pub async fn insert_node_signal(&mut self) -> Result<(), Error> {
     let hdr = dynamoc::DynamoHandler::node();
     let mut data = HashMap::<String, String>::new();
 
@@ -231,8 +286,15 @@ impl FNode{
     data.insert(String::from("signal_value"), signal.signal_value);
     data.insert(String::from("data"), signal.data.to_owned().unwrap());
 
+    let last_singal_emitted = tsgen::get_time();
     let request = hdr.make_insert_request(&self.dynamo_client, data);
-    println!("node signal inserted: {} {}", signal.epoch, signal.data.unwrap().to_owned());
+    println!("{} node signal inserted: {} {}", last_singal_emitted, signal.epoch, signal.data.unwrap().to_owned());
+
+    self.session.cimpl.set::<String, String>(
+      std::string::String::from("last_signal_emitted"),
+      last_singal_emitted
+    );
+
     hdr.commit(request).await?;
     Ok(())
   }
@@ -251,18 +313,64 @@ impl FNode{
     )
   }
 
+  pub async fn spawn_process() {
+
+  }
+
+
+  pub fn terminate_node(&mut self) {
+    self.session.set_status(
+      &std::string::String::from("TERMINATED")
+    );
+
+    matrix::Matrix::terminate_node_callback(self);
+  }
+
+  pub async fn update_session(&mut self) { }
+
+  pub fn execute_flag(&mut self) -> bool {
+    let flag = self.session.get_flag();
+
+    if ( (&flag).eq("TERMINATED") ) {
+      self.terminate_node();
+      true
+    }
+
+    else {
+      false 
+    }
+
+  }
+
   pub async fn process(&mut self) {
-    let interval = time::Duration::from_millis(15000);
+    let loop_interval = 1000;
+    let update_inteval = 15;
+    let mut frame_cnt = 0;
+
+    self.session.initialize();
+    matrix::Matrix::new_node_callback(self);
 
     loop {
-      let mut msg = String::from("update flag: ");
-      msg.push_str(self.flagset.to_string().as_str());
+      self.update_session();
+      if ( self.execute_flag() ) {
+        self.logger.info("node has been shutdown.");
+        break;
+      }
 
-      self.logger.info(msg.as_str());
-      self.update();
-      self.insert_node_signal().await;
+      if (frame_cnt % 15 == 0) {
+        let mut msg = String::from("update flag: ");
+        
+        msg.push_str(self.flagset.to_string().as_str());
+        self.logger.info(msg.as_str());
 
-      thread::sleep(interval);
+        self.update();
+        self.insert_node_signal().await;
+        self.session.timestamp();
+      }
+      
+      frame_cnt = (frame_cnt + 1) % update_inteval;
+
+      sleep(Duration::from_millis(loop_interval)).await;
     }
 
   }

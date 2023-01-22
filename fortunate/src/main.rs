@@ -1,3 +1,4 @@
+use aws_sdk_dynamodb::model::AttributeValue;
 use rand::Rng;
 
 extern crate log4rs;
@@ -12,6 +13,12 @@ mod finalizer;
 mod block;
 mod event;
 mod algorithms;
+mod hashlib;
+mod payload;
+mod primitives;
+mod client;
+mod matrix;
+mod unixprocess;
 
 use log::{debug, error, info, trace, warn};
 
@@ -21,22 +28,29 @@ use tsgen::{get_ts, get_epoch};
 use std::{time::{ UNIX_EPOCH, }, collections::HashMap};
 use std::env;
 
-use crate::event::EventBuffer;
+use crate::{event::EventBuffer, finalizer::FortunateEventFinalizer};
+use crate::primitives::{DataType, Pair};
+use crate::dynamoc::{ DynamoSelectQueryContext, DynamoSelectQuerySubType };
+use tokio::time::{sleep, Duration};
 
 async fn program() {
   let args: Vec<String> = env::args().collect();
   let component = &args[1];
 
-  println!("{:?}", args);
+  let a: &str = &std::string::String::from("abcd").as_str();
+
+  info!("args: {:?}", args);
 
   if (component == "parse") {
     let op = &args[2];
 
     if (op == "ev") {
         let buffer = &args[3];
-        let eb = EventBuffer { buffer: buffer.to_owned() };
+        let event_key = buffer.as_str()[0..6+16+16].to_string();
+
+        let eb = EventBuffer { event_key:event_key, buffer: buffer.to_owned() };
         let result = event::Event::parse_event_buffer(&eb);
-        println!("parsed: {:?}", result);
+        info!("parsed: {:?}", result);
     }
   }
 
@@ -77,21 +91,37 @@ async fn program() {
 
     else if (op == "v") {
         let epoch = &args[3];
-        println!("verify nodesignalblock {}", epoch.to_owned());
         let result = fnz.verify_nodesignalblock(epoch).await;
+
+        info!("verify nodesignalblock {}", epoch.to_owned());
+
         if (result) {
-            println!("Successfully verified {}.", epoch);
+            info!("Successfully verified {}.", epoch);
         }
         else {
-            println!("invalid hash block {}!", epoch);
+            info!("invalid hash block {}!", epoch);
         }
-
     }
   }
 
+  else if (component == "ve") {
+    let event_key = &args[2];
+    let payload = " \
+            'token': 'asdfasfd1223rwefwefewf',
+            'nonce': 'asdfdsfsf',
+        ";
+
+    let ef = FortunateEventFinalizer::new().await;
+    let p = String::from(payload);
+    let epoch = "551435".to_string();
+
+    let r = ef.verify_event_payload(&epoch, &event_key,& p).await;
+  }
+
   else if (component == "ev") {
-    println!("started to generate event");
+    info!("started to generate event");
     let epoch = std::string::String::from(&args[2]);
+    let payload = std::string::String::from("token:asdfasfd1223rwefwefewf;nonce:asdfdsfsf");
 
     let mut event_generator = event::PEventGenerator {
         uuid: std::string::String::from("abcd"),
@@ -99,15 +129,17 @@ async fn program() {
         ts: tsgen::get_ts(),
         dynamo_client: crate::dynamoc::get_dynamo_client().await
     };
+
     let commiter = event::EventCmtr::new().await;
 
-    let res = event_generator.generate_event_pe2(&epoch).await;
+    let res = event_generator.generate_event_pe2(&epoch, &payload).await;
     let event = res.unwrap();
 
     let result = commiter.commit_event(&event).await;
+
     match result {
-        Ok(e) =>  println!("{:?}", event),
-        Err(err) => println!("{:?}", err)
+        Ok(e) =>  info!("{:?}", event),
+        Err(err) => error!("{:?}", err)
     }
     
   }
@@ -117,7 +149,41 @@ async fn program() {
 
 #[tokio::main]
 async fn main() {
+    crate::client::client_main().await;
+    return;
+
+    let a = std::string::String::from("a");
+    
+    let eh = dynamoc::DynamoHandler::event();
+    let c = dynamoc::get_dynamo_client().await;
+
+    let qc = DynamoSelectQueryContext {
+        table_name: &"node_signals",
+        conditions: vec![
+                primitives::Pair::<&'static str, DataType> {
+                    k: "epoch",
+                    v: DataType::S(std::string::String::from("551435"))
+                },
+                primitives::Pair::<&'static str, DataType> {
+                    k: "signal_key",
+                    v: DataType::S(std::string::String::from("5514351672719914600569"))
+                },
+        ],
+        query_subtype: DynamoSelectQuerySubType::All
+    };
+
+    let result = eh.q(&c, &qc).await.unwrap();
+
+    match result {
+        dynamoc::SelectQuerySetResult::All(x) => println!("{:?}",x.unwrap()),
+        _ => println!("d")
+    };
+
+    return;
+
     program().await;
+    return;
+
     let fnz  = finalizer::FortunateNodeSignalFinalizer::new().await;
     return;
 
@@ -130,10 +196,10 @@ async fn main() {
     return;
 
     let block = fnz.build_block(&epoch, &prev_blockhash, &signals, &fts);
-    println!("{}", block.buffer);
+    info!("{}", block.buffer);
 
     let hash = fnz.hash_nodesignalblock(&block);
-    println!("{}", hash.hash);
+    info!("{}", hash.hash);
 
     return;
 
@@ -154,7 +220,6 @@ async fn main() {
         )
             .await;
 
-    println!("{}", blockhash.unwrap().hash);
 
     return;
 
@@ -171,7 +236,6 @@ async fn main() {
 
     let hash = fnz.hash_nodesignalblock(&block);
 
-    println!("{}", hash.hash);
     return;
 
     let blockhash = 
@@ -181,31 +245,17 @@ async fn main() {
         )
             .await;
 
-    println!("{}", blockhash.unwrap().hash);
 
     return;
 
-    let mut group = sessions::FortunateGroupSession::new();
-    group.init_group_session();
-    println!("commit");
-
     FortunateLogger::init();
     
-    let mut c = cursor::Cursor::new(String::from("abcdefg"));
+    let mut c = cursor::Cursor::new(&String::from("abcdefg"));
     let m0 = c.advance(1);
     let m1 = c.advance(2);
     let m2 = c.advance(3);
 
-    println!("{:?}", c);
-    println!("{}", m0);
-    println!("{}", m1);
-    println!("{}", m2);
-
-    let ts = tsgen::get_ts();
     let ep: String = tsgen::get_epoch();
-
-    println!("{:?}", tsgen::get_ts_pair());
-    println!("{:?}", tsgen::get_ts_pair());
 
     let client = dynamoc::get_dynamo_client().await;
     let res = client.list_tables().send().await;

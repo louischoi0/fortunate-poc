@@ -1,62 +1,74 @@
+use core::panic;
+
 use crate::node::{ FNode };
+use crate::primitives::DataType;
 use crate::tsgen::{ TsEpochPair, get_ts_pair, self };
 use env;
-use redis::Commands;
+
+use redis::{Commands, FromRedisValue, RedisResult, ToRedisArgs};
+use crate::flog::FortunateLogger;
 
 use log::{debug, info};
 
 extern crate redis;
 
-struct RedisClient {
-}
-
-pub struct FortunateGroupSession {
-  group_uuid: String,
-
-  epoch: String,
-  prev_epoch: String,
-
-  is_finalizing: bool,  
-  
+pub struct RedisImpl {
   redis_client: redis::Client,
-  redis_connection: redis::Connection,
+  pub redis_connection: redis::Connection,
+  prefix_key: Option<String>,
+
+  logger: FortunateLogger
 }
 
-impl FortunateGroupSession {
-  pub fn new() -> Self {
-    let TsEpochPair { ts, epoch } = get_ts_pair();
-    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+const REDIS_HOST: &'static str = "redis://127.0.0.1/";
+
+trait RedisQueriable {
+
+}
+
+
+impl RedisImpl {
+  pub fn new(prefix_key: Option<String>) -> Self {
+    let client = redis::Client::open(REDIS_HOST).unwrap();
     let mut con = client.get_connection().unwrap();
 
-    FortunateGroupSession {
-      group_uuid: String::from("abcdefg"),
-      epoch: epoch,
-      prev_epoch: String::from(""),
-      is_finalizing: false,
+    RedisImpl { 
       redis_client: client,
       redis_connection: con,
+      prefix_key: prefix_key,
+
+      logger: FortunateLogger::new(String::from("redisImpl")),
     }
   }
 
-  pub fn init_group_session(&mut self) {
-    self.commit_epoch();
-    let prev_epoch = tsgen::get_prev_epoch();
-    assert!(self.epoch != prev_epoch);
-    self.prev_epoch = prev_epoch;
-    self.commit_prev_epoch();
+  pub fn bind_prefix_key(&self, key: String) -> String {
+
+    match &self.prefix_key {
+      Some(x) => {
+         x.to_owned() + ":" + &key
+      }
+      None => key
+    }
+
   }
 
-  pub fn commit_epoch(&mut self) {
-    self.redis_set(String::from("epoch"), self.epoch.to_owned());
+  pub fn get<T: FromRedisValue> (&mut self, key: String) -> T{
+    let _key = self.bind_prefix_key(key);
+    self.redis_connection.get::<String, T>(_key).unwrap()
   }
 
-  pub fn commit_prev_epoch(&mut self) {
-    self.redis_set(String::from("prev_epoch"), self.prev_epoch.to_owned());
-  }
+  pub fn set<'a, V: ToRedisArgs, T: FromRedisValue>(
+    &mut self, 
+    key: String, 
+    value: V) -> () {
+    let _key = self.bind_prefix_key(key.to_owned());
+    println!(
+      "{}", format!("set key {:?} to ", _key.to_owned().as_str()).as_str()
+    );
+    self.logger.info(
+      format!("set key {:?} to ", _key.to_owned().as_str()).as_str()
+    );
 
-  pub fn redis_set(&mut self, key: String, value: String) {
-    let rkey = format!("{}#{}", self.group_uuid, key);
-    self.redis_connection.set::<String, String, String>(rkey, value).unwrap();
+    self.redis_connection.set::<'a, String, V, T>(_key, value).unwrap();
   }
-
 }

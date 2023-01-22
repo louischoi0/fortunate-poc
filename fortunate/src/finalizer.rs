@@ -2,43 +2,89 @@ use aws_sdk_dynamodb::{ Client, model::AttributeValue, };
 use sha2::digest::block_buffer::Block;
 use crate::block::BlockBuffer;
 use crate::dynamoc;
+use crate::dynamoc::DynamoSelectQueryContext;
+use crate::event::EventBuffer;
 use crate::node;
 use crate::tsgen;
 use std::collections::{HashMap};
 use hex_literal::hex;
 use sha2::{Sha256, Sha512, Digest};
 
+use log::{error, info, debug};
 
 pub struct FortunateEventFinalizer {
-  _event_dimpl: dynamoc::DynamoHandler,
+  _event_dimpl: dynamoc::DynamoEventClient,
   dynamo_client: Client,
+}
+
+impl FortunateEventFinalizer {
+  pub async fn verify_event_payload(
+    &self, 
+    epoch: &std::string::String,
+    event_key: &std::string::String,
+    payload: &std::string::String,
+  ) -> bool {
+
+    let rspn = self._event_dimpl.get_event(&self.dynamo_client, &event_key).await;
+    /**
+    match rspn {
+      Ok(result) => {
+
+        match &result {
+          Some(event) =>  {
+            let event_key = event.get("event_key").unwrap().as_s().unwrap();
+            let _payload = EventBuffer::get_payload_header_s(event_key);
+            let hashed_payload = crate::hashlib::hash_payload(&payload);
+          }, 
+          None => {
+            error!("There is no event with key {}", &event_key);
+            return false;
+          }
+        }
+
+      },
+      Err(e) => {
+        error!("{:?}", e);
+      }
+
+    }
+    */
+    true
+  }
 }
 
 impl FortunateEventFinalizer {
   pub async fn new() -> Self {
     FortunateEventFinalizer {
-      _event_dimpl: dynamoc::DynamoHandler::event(),
+      _event_dimpl: dynamoc::DynamoEventClient::new(),
       dynamo_client: dynamoc::get_dynamo_client().await,
     }
   }
 
-  pub async fn get_events(&self, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
-    let mut q = HashMap::<String, String>::new();
+  pub async fn get_events(
+    &self, 
+    epoch: &String
+  ) -> Result<Vec<HashMap<String, AttributeValue>>, ()> {
+    let qctx = DynamoSelectQueryContext {
+        table_name: &"events",
+        conditions: vec![
+                crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
+                    k: "epoch",
+                    v: crate::primitives::DataType::S(epoch.to_owned())
+                },
+        ],
+        query_subtype: crate::dynamoc::DynamoSelectQuerySubType::All
+    };
 
-    q.insert(String::from("table_name"), String::from("events"));
-    q.insert(String::from("key_column"), String::from("epoch"));
-    q.insert(String::from("key_value"), epoch.to_owned());
+    let result = self._event_dimpl.h.q(&self.dynamo_client, &qctx).await.unwrap();
 
-    let items = self._event_dimpl.query(&self.dynamo_client, q).await.unwrap();
-    let items_u = items.unwrap();
-
-    for v in items_u.iter() {
-      let data = v.get(&String::from("data"));
+    match result {
+        dynamoc::SelectQuerySetResult::All(x) => Ok(x.unwrap()),
+        _ => panic!("get events uses invalid query sub type.")
     }
 
-    items_u
   }
-}
+}    
 
 pub struct FortunateNodeSignalFinalizer {
   _nodesignal_dimpl: dynamoc::DynamoHandler,
@@ -60,19 +106,25 @@ impl FortunateNodeSignalFinalizer {
   pub async fn get_node_signals(&self, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
     let mut q = HashMap::<String,String>::new();
 
-    q.insert(String::from("table_name"), String::from("node_signals"));
-    q.insert(String::from("key_column"), String::from("epoch"));
-    q.insert(String::from("query_value"), epoch.to_owned());
+    let qctx = DynamoSelectQueryContext {
+      table_name: &"node_signals",
+      conditions: vec! [
 
-    let items = self._nodesignal_dimpl.query(&self.dynamo_client, q).await.unwrap();
+      ],
+      query_subtype: dynamoc::DynamoSelectQuerySubType::All
+    };
 
-    let items_u = items.unwrap();
+    let items = 
+      self._nodesignal_dimpl
+          .q(
+              &self.dynamo_client, 
+              &qctx
+            ).await.unwrap();
 
-    for v in items_u.iter() {
-      let data = v.get(&String::from("data"));
+    match items {
+      dynamoc::SelectQuerySetResult::All(x) => x.unwrap(),
+      _ => panic!("")
     }
-
-    items_u
   }
 
   pub async fn commit_nodesignalblock(
@@ -123,9 +175,7 @@ impl FortunateNodeSignalFinalizer {
 
   pub fn hash_nodesignalblock(&self, blockbuffer: &BlockBuffer) -> crate::block::BlockHash {
     let mut h = Sha256::new();
-
     h.update(String::from(blockbuffer.buffer.to_owned()));
-
     crate::block::BlockHash { hash: format!("{:X}", h.finalize()) }
   }
 
@@ -168,7 +218,7 @@ impl FortunateNodeSignalFinalizer {
 
     match result {
       Err(e)=> {
-        println!("commit failed. {:?}", e)
+        error!("commit failed. {:?}", e)
       },
       Ok(x) => {
 
@@ -193,19 +243,25 @@ impl FortunateNodeSignalFinalizer {
   }
 
   pub async fn get_block(&self, epoch: &String) -> HashMap<String, AttributeValue> {
-    let mut data = HashMap::<String, String>::new();
+    let qctx = DynamoSelectQueryContext {
+      table_name: &"events",
+      conditions: vec! [
 
-    data.insert(String::from("table_name"), String::from("node_signal_blocks")); //TODO
-    data.insert(String::from("key_column"), String::from("epoch"));
-    data.insert(String::from("query_value"), epoch.to_owned());
-    println!("{:?}", data);
+      ],
+      query_subtype: dynamoc::DynamoSelectQuerySubType::All
+    };
 
-    let res = self._nodesignal_dimpl.query(
+    let items = self._nodesignal_dimpl.q(
       &self.dynamo_client,
-      data
-    ).await;
+      &qctx 
+    ).await.unwrap();
 
-    res.unwrap().unwrap()[0].to_owned()
+    match items {
+      dynamoc::SelectQuerySetResult::One(x) 
+        => x.unwrap(), 
+      dynamoc::SelectQuerySetResult::All(x) 
+        => panic!("get block used invalid query sub type.")
+    }
   }
 
   pub async fn get_block_hash(&self, epoch: &String) -> String {

@@ -36,6 +36,11 @@ pub fn get_ts() -> String {
   now.format(format).to_string()
 }
 
+pub fn get_time() -> String {
+  let date = chrono::Local::now();
+  date.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 pub fn get_epoch() -> String {
   let its = get_ts().parse::<i64>().unwrap();
   format!("{:X}", its / 300000000)
