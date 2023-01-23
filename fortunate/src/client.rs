@@ -28,6 +28,12 @@ pub fn cli() -> Command {
                 .arg(arg!(<REGIONID> "region"))
                 .about("list nodes active")
         )
+        .subcommand(
+          Command::new("start")
+                .about("start fortunate")
+        )
+
+      
 }
 pub fn query_client_status(region: &std::string::String) {
   let mut imp = RedisImpl::new(None);
@@ -52,6 +58,12 @@ pub fn query_client_status(region: &std::string::String) {
   };
 
 }
+
+/**
+pub async fn start_fortunate() {
+  vec!["node000", "node001", "node002"]
+}
+ */
 
 pub async fn client_main() {
    let matches = cli().get_matches();

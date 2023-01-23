@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use redis::Commands;
 
-use crate::{tsgen, sessions::RedisImpl, node::FNode};
+use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSignalFinalizer};
 
-pub struct Matrix<'a> {
+pub struct Matrix {
   /**
    * managing server session and status, nodes, block 
    */
@@ -16,29 +16,123 @@ pub struct Matrix<'a> {
   pub status: String, 
 
   pub is_finializing: bool,
-  
-  pub nodemap: HashMap<String, &'a Vec<String>>,
-  pub cimpl: crate::sessions::RedisImpl,
+  pub is_genesis: bool, 
 
+  nodsignal_finalizer: FortunateNodeSignalFinalizer,
+  
+  pub cimpl: crate::sessions::RedisImpl,
   pub created_at: crate::tsgen::Timestamp,
 }
 
-impl <'a> Matrix<'a> {
+impl Matrix {
 
-  fn new(&self, uuid: &std::string::String) -> Self {
+  async fn new(&self, uuid: &std::string::String) -> Self {
+    let region = std::string::String::from("northeast-1");
+
     Matrix {
       uuid: uuid.to_owned(),
 
       epoch: std::string::String::from(""), //TODO
       prev_epoch: std::string::String::from(""), //TODO
 
+      is_genesis: false,
+
       status: std::string::String::from("INITIATED"),
       is_finializing: false,
-      nodemap: HashMap::<String,&'a Vec< String>>::new(),
-      cimpl: crate::sessions::RedisImpl::new(Some(uuid.to_owned())),
 
+      nodsignal_finalizer: FortunateNodeSignalFinalizer::new(
+        &region
+      ).await,
+
+      cimpl: crate::sessions::RedisImpl::new(Some(uuid.to_owned())),
       created_at: tsgen::get_ts_c(),
     }
+  }
+
+  fn check_exit_flag_and_terminate(&self, session: &HashMap<String, String>) -> bool {
+    false
+  }
+
+  fn process(&mut self) {
+    let interval = 10;
+    let mut _epoch: Option<&String> = None;
+    let mut _prev_epoch: Option<&String> = None;
+
+    loop {
+      let session = self.get_matrix_session();
+      _epoch = session.get(
+        &std::string::String::from("epoch")
+      );
+
+      match _epoch {
+        Some(e) => {
+          if (self.epoch != _epoch.unwrap().to_owned()) {
+
+          }
+          else {
+
+          }
+        }
+        None => {}
+      }
+
+      let is_genesis = 
+        session.get(
+          &std::string::String::from("is_genesis")
+        ).unwrap();
+      
+      let exit = self.check_exit_flag_and_terminate(&session);
+
+      if (is_genesis == "true") {
+
+      }
+      
+      else {
+
+      }
+
+
+      if (exit) {
+        break;
+      }
+    }
+
+  }
+
+  fn commit_matrix_session(&mut self) -> () {
+    let data = self.get_matrix_session();
+
+    for (k, v) in data {
+      self.cimpl.set::<String, String>(k.to_owned(), v.to_owned());
+    }
+
+  }
+
+  fn get_matrix_session(&self) -> HashMap<String, String> {
+    let mut data = HashMap::<String, String>::new();
+
+    data.insert(
+      std::string::String::from("epoch"),
+      self.epoch.to_owned()
+    );
+
+    data.insert(
+      std::string::String::from("prev_epoch"),
+      self.is_genesis.to_string(),
+    );
+
+    data.insert(
+      std::string::String::from("is_genesis"),
+      self.epoch.to_owned()
+    );
+
+    data
+  }
+
+  async fn init_matrix_genesis(
+    &self
+  ) -> () {
+
   }
 
   async fn spawn_node(&mut self) {

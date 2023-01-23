@@ -5,6 +5,9 @@ use crate::dynamoc;
 use crate::dynamoc::DynamoSelectQueryContext;
 use crate::event::EventBuffer;
 use crate::node;
+
+use crate::primitives;
+
 use crate::tsgen;
 use std::collections::{HashMap};
 use hex_literal::hex;
@@ -91,26 +94,32 @@ pub struct FortunateNodeSignalFinalizer {
   _nodesignalblock_dimpl: dynamoc::DynamoHandler,
 
   dynamo_client: Client,
+
+  pub region: std::string::String,
 }
 
 impl FortunateNodeSignalFinalizer {
-  pub async fn new() -> Self {
+  pub async fn new(
+    region: &std::string::String,
+  ) -> Self {
     
     FortunateNodeSignalFinalizer {
       _nodesignal_dimpl: dynamoc::DynamoHandler::nodesignal(), // TODO
       _nodesignalblock_dimpl: dynamoc::DynamoHandler::nodesignalblock(), // TODO
       dynamo_client: dynamoc::get_dynamo_client().await,
+      region: region.to_owned(),
     }
   }
 
   pub async fn get_node_signals(&self, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
-    let mut q = HashMap::<String,String>::new();
-
     let qctx = DynamoSelectQueryContext {
       table_name: &"node_signals",
       conditions: vec! [
-
-      ],
+        primitives::Pair::<&'static str, primitives::DataType> {
+            k: "epoch",
+            v: primitives::DataType::S(epoch.to_owned()),
+        },
+       ],
       query_subtype: dynamoc::DynamoSelectQuerySubType::All
     };
 
@@ -190,7 +199,11 @@ impl FortunateNodeSignalFinalizer {
     ret
   }
 
-  pub async fn finalize_nodesignalblock(&self, epoch: &String, prev_epoch: Option<&String>) -> std::option::Option<crate::block::BlockHash> {
+  pub async fn finalize_nodesignalblock(
+    &self, 
+    epoch: &String, 
+    prev_epoch: Option<&String>
+  ) -> std::option::Option<crate::block::BlockHash> {
     let mut _prev_block_hash = String::from("");
     let mut _prev_epoch = None;
 

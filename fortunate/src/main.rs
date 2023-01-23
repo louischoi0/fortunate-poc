@@ -61,12 +61,17 @@ async fn program() {
 
   if (component == "fnz") {
     let op = &args[2];
-    let fnz  = finalizer::FortunateNodeSignalFinalizer::new().await;
+    let region = std::string::String::from("northeast-1");
+    let fnz  = 
+        finalizer::FortunateNodeSignalFinalizer::new(&region).await;
 
     if (op == "gf") {
         let epoch = &args[3];
+        let region = std::string::String::from("northeast-1");
 
-        let fnz  = finalizer::FortunateNodeSignalFinalizer::new().await;
+        let fnz  = 
+            finalizer::FortunateNodeSignalFinalizer::new(&region).await;
+
         let blockhash = 
             fnz.finalize_nodesignalblock(
                 &String::from(epoch), 
@@ -184,7 +189,10 @@ async fn main() {
     program().await;
     return;
 
-    let fnz  = finalizer::FortunateNodeSignalFinalizer::new().await;
+    let region = std::string::String::from("northeast-1");
+    let fnz  
+        = finalizer::FortunateNodeSignalFinalizer::new(&region).await;
+
     return;
 
     let epoch = String::from("550FC6");
