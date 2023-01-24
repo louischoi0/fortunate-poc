@@ -60,11 +60,9 @@ impl RedisImpl {
   pub fn set<'a, V: ToRedisArgs, T: FromRedisValue>(
     &mut self, 
     key: String, 
-    value: V) -> () {
+    value: V
+  ) -> () {
     let _key = self.bind_prefix_key(key.to_owned());
-    println!(
-      "{}", format!("set key {:?} to ", _key.to_owned().as_str()).as_str()
-    );
     self.logger.info(
       format!("set key {:?} to ", _key.to_owned().as_str()).as_str()
     );

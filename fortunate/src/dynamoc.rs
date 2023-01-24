@@ -35,7 +35,7 @@ type DynamoWhereCondition<'a> = Pair<&'a str, DataType>;
 pub struct DynamoSelectQueryContext<'a> {
   pub table_name: &'a str,
   // multiple codntions is always evaluated as AND queries.
-  pub conditions: std::vec::Vec<DynamoWhereCondition<'a>>,
+  pub conditions: Option<std::vec::Vec<DynamoWhereCondition<'a>>>,
   pub query_subtype: DynamoSelectQuerySubType,
 }
 
@@ -143,7 +143,6 @@ fn bind_value_to_conditions(q: &Query, cond: &Vec<DynamoWhereCondition>) -> Quer
 
   for it in cond.iter() {
     let data = DynamoHandler::convert_to_dynamo_attributes(&it.v).unwrap();
-    println!("{:?}", &data);
 
     ac = ac.expression_attribute_values(
       format!(":{}", it.k),
@@ -175,7 +174,13 @@ impl DynamoQueriable for aws_sdk_dynamodb::client::fluent_builders::Query {
 
   fn build(client: &Client, qctx: &DynamoSelectQueryContext) -> Self {
     let q = client.query().table_name(qctx.table_name);
-    q.bind_conditions(&qctx.conditions)
+
+    match &qctx.conditions {
+      Some(x) => {
+        q.bind_conditions(x)
+      },
+      None => q
+    }
   }
 
   fn bind_conditions(
@@ -185,6 +190,7 @@ impl DynamoQueriable for aws_sdk_dynamodb::client::fluent_builders::Query {
     let qs = build_query_string_from_conditions(conditions);
     let q = self.to_owned();
     let q= q.key_condition_expression(qs);
+
     bind_value_to_conditions(&q, conditions)
   }
 }
@@ -193,7 +199,13 @@ impl DynamoQueriable for aws_sdk_dynamodb::client::fluent_builders::GetItem {
 
   fn build(client: &Client, qctx: &DynamoSelectQueryContext) -> Self {
     let q = client.get_item().table_name(qctx.table_name);
-    q.bind_conditions(&qctx.conditions)
+
+    match &qctx.conditions {
+      Some(x) => {
+        q.bind_conditions(x)
+      },
+      None => q
+    }
   }
 
   fn bind_conditions(
@@ -269,8 +281,17 @@ impl DynamoHandler {
   }
 
   pub async fn commit(&self, request: PutItem) -> Result<(), Error> {
-    request.send().await?;
-    Ok(())
+
+    let res = request.send().await;
+
+    match &res {
+      Ok(x) => {
+        Ok(())
+      },
+      Err(e) => {
+        panic!("SDK ERROR! {:?}", e);
+      },
+    }
   }
 
   pub fn new(schema: DynamoSchema) -> Self {
@@ -299,25 +320,4 @@ impl DynamoHandler {
 struct DynamoNodeHdr {
 
 }
-
-
-pub struct DynamoEventClient {
-  pub h: DynamoHandler
-}
-
-impl DynamoEventClient {
-  pub fn new() -> Self {
-    DynamoEventClient { h: DynamoHandler::event() }
-  }
-
-  pub async fn get_event(&self, client: &Client, event_key: &std::string::String) 
-    //-> Result<QuerySetResult1, Error> {
-    -> Result<(), Error> {
-      Ok(())
-  }
-
-}
-
-
-
 

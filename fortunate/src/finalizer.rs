@@ -16,11 +16,43 @@ use sha2::{Sha256, Sha512, Digest};
 use log::{error, info, debug};
 
 pub struct FortunateEventFinalizer {
-  _event_dimpl: dynamoc::DynamoEventClient,
+  _event_dimpl: dynamoc::DynamoHandler,
   dynamo_client: Client,
 }
 
 impl FortunateEventFinalizer {
+  pub async fn new() -> Self {
+    FortunateEventFinalizer {
+      _event_dimpl: dynamoc::DynamoHandler::event(),
+      dynamo_client: dynamoc::get_dynamo_client().await,
+    }
+  }
+
+  pub async fn get_events(
+    &self, 
+    epoch: &String
+  ) -> Result<Vec<HashMap<String, AttributeValue>>, ()> {
+    let qctx = DynamoSelectQueryContext {
+        table_name: &"events",
+        conditions: Some(vec![
+                crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
+                    k: "epoch",
+                    v: crate::primitives::DataType::S(epoch.to_owned())
+                },
+        ]),
+        query_subtype: crate::dynamoc::DynamoSelectQuerySubType::All
+    };
+
+    let result = 
+      self._event_dimpl.q(&self.dynamo_client, &qctx).await.expect("dynamo select operation is failed.");
+
+    match result {
+        dynamoc::SelectQuerySetResult::All(x) => Ok(x.unwrap()),
+        _ => panic!("get events uses invalid query sub type.")
+    }
+
+  }
+
   pub async fn verify_event_payload(
     &self, 
     epoch: &std::string::String,
@@ -28,8 +60,9 @@ impl FortunateEventFinalizer {
     payload: &std::string::String,
   ) -> bool {
 
-    let rspn = self._event_dimpl.get_event(&self.dynamo_client, &event_key).await;
     /**
+    let rspn = self.get_event
+
     match rspn {
       Ok(result) => {
 
@@ -54,72 +87,54 @@ impl FortunateEventFinalizer {
     */
     true
   }
-}
-
-impl FortunateEventFinalizer {
-  pub async fn new() -> Self {
-    FortunateEventFinalizer {
-      _event_dimpl: dynamoc::DynamoEventClient::new(),
-      dynamo_client: dynamoc::get_dynamo_client().await,
-    }
-  }
-
-  pub async fn get_events(
-    &self, 
-    epoch: &String
-  ) -> Result<Vec<HashMap<String, AttributeValue>>, ()> {
-    let qctx = DynamoSelectQueryContext {
-        table_name: &"events",
-        conditions: vec![
-                crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
-                    k: "epoch",
-                    v: crate::primitives::DataType::S(epoch.to_owned())
-                },
-        ],
-        query_subtype: crate::dynamoc::DynamoSelectQuerySubType::All
-    };
-
-    let result = self._event_dimpl.h.q(&self.dynamo_client, &qctx).await.unwrap();
-
-    match result {
-        dynamoc::SelectQuerySetResult::All(x) => Ok(x.unwrap()),
-        _ => panic!("get events uses invalid query sub type.")
-    }
-
-  }
 }    
 
 pub struct FortunateNodeSignalFinalizer {
+  pub uuid: std::string::String,
+
   _nodesignal_dimpl: dynamoc::DynamoHandler,
   _nodesignalblock_dimpl: dynamoc::DynamoHandler,
 
   dynamo_client: Client,
 
+  pub cimpl: crate::sessions::RedisImpl,
+
   pub region: std::string::String,
+  pub logger: crate::flog::FortunateLogger,
 }
 
 impl FortunateNodeSignalFinalizer {
   pub async fn new(
     region: &std::string::String,
   ) -> Self {
+    let _uuid = format!("nodesignalfinalizer:{}", region);
     
-    FortunateNodeSignalFinalizer {
+    let mut fnz = FortunateNodeSignalFinalizer {
+      uuid: _uuid.to_owned(),
       _nodesignal_dimpl: dynamoc::DynamoHandler::nodesignal(), // TODO
       _nodesignalblock_dimpl: dynamoc::DynamoHandler::nodesignalblock(), // TODO
       dynamo_client: dynamoc::get_dynamo_client().await,
+
+      cimpl: crate::sessions::RedisImpl::new(Some(_uuid.to_owned())),
+
       region: region.to_owned(),
-    }
+      logger: crate::flog::FortunateLogger::new(String::from("nodesignalfinalizer")),
+    };
+
+    crate::matrix::ObjectLock::init_object_lock(&mut fnz.cimpl, &fnz.uuid);
+
+    fnz
   }
 
   pub async fn get_node_signals(&self, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
     let qctx = DynamoSelectQueryContext {
       table_name: &"node_signals",
-      conditions: vec! [
+      conditions: Some(vec! [
         primitives::Pair::<&'static str, primitives::DataType> {
             k: "epoch",
             v: primitives::DataType::S(epoch.to_owned()),
         },
-       ],
+       ]),
       query_subtype: dynamoc::DynamoSelectQuerySubType::All
     };
 
@@ -148,7 +163,7 @@ impl FortunateNodeSignalFinalizer {
     let blockhash = self.hash_nodesignalblock(&block);
 
     data.insert(String::from("epoch"), epoch.to_owned());
-    data.insert(String::from("group"), String::from("region-01"));
+    data.insert(String::from("region"), self.region.to_owned());
     data.insert(String::from("hash"), blockhash.hash.to_owned());
     data.insert(String::from("block"), block.buffer.to_owned());
     data.insert(String::from("ts"), ts.to_owned());
@@ -157,17 +172,14 @@ impl FortunateNodeSignalFinalizer {
     data.insert(String::from("finalized"), String::from("y"));
 
     let request = self._nodesignalblock_dimpl.make_insert_request(&self.dynamo_client, data);
-    self._nodesignalblock_dimpl.commit(request).await;
+
+    self._nodesignalblock_dimpl.commit(request).await
+      .expect("dynamo operation failed some reason.");
+
     Ok(blockhash)
   }
 
   pub async fn verify_nodesignalblock(&self, epoch: &String) -> bool {
-    let mut query = HashMap::<String, String>::new();
-
-    query.insert(String::from("table_name"), String::from("node_signal_blocks")); //TODO 일음바꾸기
-    query.insert(String::from("key_column"), String::from("epoch")); 
-    query.insert(String::from("query_value"), String::from(epoch)); 
-
     let block = self.get_block(epoch).await;
     let signals = self.get_node_signals(epoch).await;
 
@@ -239,7 +251,6 @@ impl FortunateNodeSignalFinalizer {
     }
     let blockhash = self.hash_nodesignalblock(&blockbuffer) ;
     Some(blockhash)
-
   }
 
   pub fn build_block(
@@ -257,11 +268,14 @@ impl FortunateNodeSignalFinalizer {
 
   pub async fn get_block(&self, epoch: &String) -> HashMap<String, AttributeValue> {
     let qctx = DynamoSelectQueryContext {
-      table_name: &"events",
-      conditions: vec! [
-
-      ],
-      query_subtype: dynamoc::DynamoSelectQuerySubType::All
+      table_name: &"node_signal_blocks",
+      conditions: Some(vec![
+              crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
+                  k: "epoch",
+                  v: crate::primitives::DataType::S(epoch.to_owned())
+              },
+      ]),
+      query_subtype: dynamoc::DynamoSelectQuerySubType::One
     };
 
     let items = self._nodesignal_dimpl.q(

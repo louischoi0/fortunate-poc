@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
 use clap::{arg, Command};
+use redis::Commands;
 
 use crate::{node::FNode, sessions::RedisImpl};
-use redis::Commands;
+use crate::{finalizer::FortunateNodeSignalFinalizer};
 
 pub fn cli() -> Command {
     Command::new("/usr/local/bin/fortunate")
@@ -32,9 +33,25 @@ pub fn cli() -> Command {
           Command::new("start")
                 .about("start fortunate")
         )
-
+        .subcommand(
+          Command::new("verify")
+                .about("verify block or signals or event")
+                .arg(arg!(<COMPONENT> "component"))
+                .arg_required_else_help(true)
+                .arg(arg!(<HASHKEY> "hashkey"))
+                .arg_required_else_help(true)
+        )
+        .subcommand(
+          Command::new("dgenerate")
+                .about("generate some events and it is for development")
+        )
       
 }
+
+pub fn generate_event_periodically() -> () {
+
+}
+
 pub fn query_client_status(region: &std::string::String) {
   let mut imp = RedisImpl::new(None);
 
@@ -59,26 +76,24 @@ pub fn query_client_status(region: &std::string::String) {
 
 }
 
-/**
-pub async fn start_fortunate() {
-  vec!["node000", "node001", "node002"]
-}
- */
-
 pub async fn client_main() {
    let matches = cli().get_matches();
 
    match matches.subcommand() {
-       Some(("runnode", sub_matches)) => {
-         println!( "run node: {}", sub_matches.get_one::<String>("NODEID").expect("required"));
-         let nodeid = sub_matches.get_one::<String>("NODEID").unwrap();
-         let mut nd = FNode::new(nodeid.to_owned()).await;
-         nd.process().await;
+      Some(("runnode", sub_matches)) => {
+        println!( "run node: {}", sub_matches.get_one::<String>("NODEID").expect("required"));
+        let nodeid = sub_matches.get_one::<String>("NODEID").unwrap();
+        let nodeid = format!("node:{}", nodeid);
+
+        let region = std::string::String::from("matrix:northeast-1"); 
+        let mut nd = FNode::new(&nodeid, &region).await;
+        nd.process().await;
        },
 
-       Some(("terminate", sub_matches)) => {
+      Some(("terminate", sub_matches)) => {
         println!( "terminate node: {}", sub_matches.get_one::<String>("NODEID").expect("required"));
         let nodeid = sub_matches.get_one::<String>("NODEID").unwrap();
+        let nodeid = format!("node:{}", nodeid);
 
         let mut imp = RedisImpl::new(Some(nodeid.to_owned()));
         imp.set::<String, String>( 
@@ -88,13 +103,49 @@ pub async fn client_main() {
 
        },
 
-       Some(("nodelist", sub_matches)) => {
+      Some(("nodelist", sub_matches)) => {
         println!("query nodelist.");
         let region = sub_matches.get_one::<String>("REGIONID").unwrap();
         query_client_status(region);
+      },
+
+      Some(("start", sub_matches)) => {
+        println!("start fortunate matrix");
+        let mut matrix = crate::matrix::Matrix::new(
+          &std::string::String::from("matrix:northeast-1")
+        ).await;
+
+        matrix.process().await;
        },
 
-       _ => panic!("panic here.")
+      Some(("verify", sub_matches)) => {
+        let component = sub_matches.get_one::<String>("COMPONENT").expect("required.");
+        let hash_key= sub_matches.get_one::<String>("HASHKEY").expect("required.");
+
+        println!("verify {}: {}", component, hash_key);
+
+        let region = std::string::String::from("northeast-1");
+
+        if (component == "signalblock") {
+          let fnz  = 
+              FortunateNodeSignalFinalizer::new(&region).await;
+
+          fnz.logger.info(
+            format!("verify nodesignalblock {}", hash_key).as_str()
+          );
+
+          let verified = fnz.verify_nodesignalblock(hash_key).await;
+
+          assert!(verified);
+
+          fnz.logger.info(
+            format!("successfully verified: nodesignalblock {}", hash_key).as_str()
+          );
+        }
+
+       },
+
+       _ => panic!("panic here."),
    }
 
 }

@@ -54,11 +54,6 @@ async fn program() {
     }
   }
 
-  if (component == "nd") {
-    let mut node0 = node::FNode::new(String::from("abd3")).await;
-    node0.process().await;
-  }
-
   if (component == "fnz") {
     let op = &args[2];
     let region = std::string::String::from("northeast-1");
@@ -85,7 +80,7 @@ async fn program() {
       let epoch =  &args[3];
       let prv_epoch = &args[4];
      
-        let blockhash = 
+      let blockhash = 
             fnz.finalize_nodesignalblock(
                 &String::from(epoch), 
                 Some(&String::from(prv_epoch)),
@@ -154,6 +149,7 @@ async fn program() {
 
 #[tokio::main]
 async fn main() {
+    FortunateLogger::init();
     crate::client::client_main().await;
     return;
 
@@ -164,7 +160,7 @@ async fn main() {
 
     let qc = DynamoSelectQueryContext {
         table_name: &"node_signals",
-        conditions: vec![
+        conditions: Some(vec![
                 primitives::Pair::<&'static str, DataType> {
                     k: "epoch",
                     v: DataType::S(std::string::String::from("551435"))
@@ -173,7 +169,7 @@ async fn main() {
                     k: "signal_key",
                     v: DataType::S(std::string::String::from("5514351672719914600569"))
                 },
-        ],
+        ]),
         query_subtype: DynamoSelectQuerySubType::All
     };
 
@@ -181,7 +177,7 @@ async fn main() {
 
     match result {
         dynamoc::SelectQuerySetResult::All(x) => println!("{:?}",x.unwrap()),
-        _ => println!("d")
+        _ => ()
     };
 
     return;

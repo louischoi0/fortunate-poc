@@ -1,6 +1,8 @@
 use std::time::{SystemTime,};
 use chrono;
 
+const EPOCH_INTERVAL_MIN: u64 = 5;
+
 #[derive(std::clone::Clone, Debug)]
 pub struct Timestamp {
   pub s: std::string::String,
@@ -42,13 +44,13 @@ pub fn get_time() -> String {
 }
 
 pub fn get_epoch() -> String {
-  let its = get_ts().parse::<i64>().unwrap();
-  format!("{:X}", its / 300000000)
+  let its = get_ts().parse::<u64>().unwrap();
+  format!("{:X}", its / (EPOCH_INTERVAL_MIN * 60000000))
 }
 
 pub fn get_prev_epoch() -> String {
-  let its = get_ts().parse::<i64>().unwrap();
-  format!("{:X}", (its / 300000000) - 1)
+  let its = get_ts().parse::<u64>().unwrap();
+  format!("{:X}", (its / (EPOCH_INTERVAL_MIN * 60000000)) - 1)
 }
 
 pub fn get_prev_epoch_e(epoch: &String) -> String {

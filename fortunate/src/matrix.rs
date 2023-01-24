@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-
+use tokio::time::{sleep, Duration};
 use redis::Commands;
 
 use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSignalFinalizer};
+use crate::flog::FortunateLogger;
 
 pub struct Matrix {
   /**
@@ -11,7 +12,7 @@ pub struct Matrix {
   pub uuid: String, 
 
   pub epoch: String,
-  pub prev_epoch: String, 
+  pub prev_epoch: Option<String>, 
 
   pub status: String, 
 
@@ -19,6 +20,7 @@ pub struct Matrix {
   pub is_genesis: bool, 
 
   nodsignal_finalizer: FortunateNodeSignalFinalizer,
+  logger: FortunateLogger,
   
   pub cimpl: crate::sessions::RedisImpl,
   pub created_at: crate::tsgen::Timestamp,
@@ -26,14 +28,13 @@ pub struct Matrix {
 
 impl Matrix {
 
-  async fn new(&self, uuid: &std::string::String) -> Self {
-    let region = std::string::String::from("northeast-1");
-
-    Matrix {
+  pub async fn new(uuid: &std::string::String) -> Self {
+    
+    let mut matrix = Matrix {
       uuid: uuid.to_owned(),
 
-      epoch: std::string::String::from(""), //TODO
-      prev_epoch: std::string::String::from(""), //TODO
+      epoch: tsgen::get_epoch(), //TODO from redis session
+      prev_epoch: None, //TODO from redis session
 
       is_genesis: false,
 
@@ -41,60 +42,98 @@ impl Matrix {
       is_finializing: false,
 
       nodsignal_finalizer: FortunateNodeSignalFinalizer::new(
-        &region
+        &uuid[7..uuid.len()].to_string()
       ).await,
 
+      logger: FortunateLogger::new(String::from("node")),
       cimpl: crate::sessions::RedisImpl::new(Some(uuid.to_owned())),
       created_at: tsgen::get_ts_c(),
-    }
+    };
+
+    ObjectLock::init_object_lock(&mut matrix.cimpl, uuid);
+
+    matrix
   }
 
   fn check_exit_flag_and_terminate(&self, session: &HashMap<String, String>) -> bool {
     false
   }
 
-  fn process(&mut self) {
+  async fn start_finalizing(&mut self) {
+    ObjectLock::acquire(
+      &mut self.cimpl, &self.uuid, &self.uuid, 1
+    );
+  }
+
+  async fn end_finalizing(&mut self) {
+    ObjectLock::release(
+      &mut self.cimpl, &self.uuid
+    );
+  }
+
+  async fn commit_new_nodesignal_block(
+    &self,
+    _epoch: &std::string::String,
+    _prev_epoch: &Option<std::string::String>,
+  ) -> crate::block::BlockHash {
+
+    match &_prev_epoch {
+      Some(pe) => {
+            self.nodsignal_finalizer.finalize_nodesignalblock(
+                &String::from(_epoch), 
+                Some(pe)
+            )
+                .await
+                .expect("")
+      },
+      None => { // when block is genesis
+            self.nodsignal_finalizer.finalize_nodesignalblock(
+                &String::from(_epoch), 
+                None,
+            )
+                .await
+                .expect("")
+      }
+    }
+  }
+
+  pub async fn process(&mut self) -> () {
     let interval = 10;
-    let mut _epoch: Option<&String> = None;
-    let mut _prev_epoch: Option<&String> = None;
+
+    let mut _epoch: String = self.epoch.to_owned();
+    let mut session = HashMap::<String, String>::new();
+    let mut loop_cnt: u64 = 0;
 
     loop {
-      let session = self.get_matrix_session();
-      _epoch = session.get(
-        &std::string::String::from("epoch")
-      );
+      loop_cnt += 1;
 
-      match _epoch {
-        Some(e) => {
-          if (self.epoch != _epoch.unwrap().to_owned()) {
-
-          }
-          else {
-
-          }
-        }
-        None => {}
+      if (loop_cnt % 100 == 0) {
+        self.logger.info("session is working.");
       }
 
-      let is_genesis = 
-        session.get(
-          &std::string::String::from("is_genesis")
-        ).unwrap();
-      
-      let exit = self.check_exit_flag_and_terminate(&session);
-
-      if (is_genesis == "true") {
-
-      }
-      
-      else {
-
+      {
+        //session = self.get_matrix_session();
       }
 
+      _epoch = tsgen::get_epoch();
 
-      if (exit) {
-        break;
+      if (_epoch != self.epoch) {
+        self.start_finalizing().await;
+
+        self.commit_new_nodesignal_block(
+          &self.epoch, &self.prev_epoch
+        ).await;
+
+        self.prev_epoch = Some(self.epoch.to_owned());
+        self.epoch = _epoch;
+
+        self.commit_matrix_session();
+        self.end_finalizing().await;
       }
+
+      if (self.check_exit_flag_and_terminate(&session)) { break; }
+
+      sleep(Duration::from_millis(interval)).await;
     }
 
   }
@@ -118,33 +157,10 @@ impl Matrix {
 
     data.insert(
       std::string::String::from("prev_epoch"),
-      self.is_genesis.to_string(),
-    );
-
-    data.insert(
-      std::string::String::from("is_genesis"),
-      self.epoch.to_owned()
+      self.prev_epoch.to_owned().unwrap(),
     );
 
     data
-  }
-
-  async fn init_matrix_genesis(
-    &self
-  ) -> () {
-
-  }
-
-  async fn spawn_node(&mut self) {
-    let uuid = crate::hashlib::uuid(16);
-    let _uuid = uuid.to_owned();
-     
-    let handle  = 
-      tokio::spawn(async move {
-        let mut node0 = crate::node::FNode::new(uuid.to_owned()).await;
-        node0.process().await;
-      });
-    
   }
 
   pub fn terminate_node_callback(
@@ -152,14 +168,18 @@ impl Matrix {
   ) {
     let key = node.region.to_owned() + ":nodelist";
 
-    node.session.cimpl.redis_connection.lrem::<String,String,String> (
+    let result = node.session.cimpl.redis_connection.lrem::<String,String,String> (
       key, 0, std::string::String::from (
         node.uuid.to_owned()
       )
     );
 
-    println!("remove node: '{}'", node.uuid.to_owned())
-
+    match &result {
+      Ok(x) => {},
+      Err(e) => {
+        panic!("err!")
+      }
+    }
   }
 
   pub fn new_node_callback(
@@ -176,17 +196,115 @@ impl Matrix {
 }
 
 
-struct ObjectLock {
-  object_uuid: String, 
-  holder: u64,
+pub struct ObjectLock { }
 
-  lock_type: u8,
-  
-  last_status: u8,  
-  last_updated_at: u64,
+
+impl ObjectLock { 
+
+  fn parse_key(
+    object_uuid: &std::string::String,
+    lock_type: &'static str,
+  ) -> std::string::String {
+    format!("{}:{}", object_uuid, lock_type)
+  }
+
+  fn get(
+    cimpl: &mut RedisImpl,
+    object_uuid: &std::string::String,
+    lock_type: &'static str,
+  ) -> std::string::String {
+    let key = ObjectLock::parse_key(object_uuid, lock_type);
+    cimpl.redis_connection.get::<String, String>(
+      key,
+    ).expect("")
+  }
+
+  fn set(
+    cimpl: &mut RedisImpl,
+    object_uuid: &std::string::String,
+    lock_type: &'static str,
+    v: &std::string::String,
+  ) -> () {
+    let key = ObjectLock::parse_key(object_uuid, lock_type);
+    cimpl.redis_connection.set::<String, String, String> (
+      key, v.to_owned()
+    );
+  }
+
+  pub fn init_object_lock(
+    cimpl: &mut RedisImpl,
+    object_uuid: &std::string::String,
+  ) -> () {
+    ObjectLock::set(
+      cimpl, object_uuid, "object_lock", 
+      &std::string::String::from("0")
+    );
+
+    ObjectLock::set(
+      cimpl, object_uuid, "created_at", 
+      &tsgen::get_ts(),
+    );
+  }
+
+  pub async fn release(
+    cimpl: &mut RedisImpl,
+    object_uuid: &std::string::String,
+  ) -> () {
+    ObjectLock::set(
+      cimpl, object_uuid, "object_lock", 
+      &std::string::String::from("0")
+    );
+
+    ObjectLock::set(
+      cimpl, object_uuid, "last_released_at", 
+      &tsgen::get_ts()
+    );
+
+  }
+
+  pub async fn acquire(
+    cimpl: &mut RedisImpl,
+    object_uuid: &std::string::String,
+    requester: &std::string::String,
+    mode: u8
+  ) -> bool {
+    let interval = 10;
+    /**
+    ObjectLock::LOCK_LOGGER.info(
+      format!("Acquire for {} from {}; mod:{:?}", object_uuid, requester, mode)
+            .as_str()
+    );
+    */
+
+    loop {
+      let lock = ObjectLock::get(cimpl, object_uuid, "object_lock");
+
+      if (lock == "0") {
+        ObjectLock::set(cimpl, object_uuid, "holder", requester);
+        ObjectLock::set(cimpl, object_uuid, "last_acquired_at", &tsgen::get_ts());
+
+        /**
+         * 0 shared lock
+         * 1 exclusive lock
+         */
+        if (mode == 1) {
+          ObjectLock::set(
+            cimpl, object_uuid, "object_lock", &std::string::String::from("1"), 
+          );
+        }
+
+        break;
+      }
+      else {
+        sleep(Duration::from_millis(interval)).await;
+      }
+
+    }
+
+    true
+  }
+
 }
-
-impl ObjectLock { }
 
 pub struct ObjectSession {
   pub uuid: String,

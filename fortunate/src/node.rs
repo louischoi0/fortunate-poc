@@ -191,8 +191,7 @@ impl FNode{
 
     let qctx = crate::dynamoc::DynamoSelectQueryContext {
       table_name: &"events",
-      conditions: vec! [
-      ],
+      conditions: None,
       query_subtype: dynamoc::DynamoSelectQuerySubType::All
     };
 
@@ -208,16 +207,15 @@ impl FNode{
     }
   }
 
-  pub async fn new(uuid: String) -> Self {
+  pub async fn new(uuid: &std::string::String, region: &std::string::String) -> Self {
 
     //TODO make function mapping to region based on statics
-    let region = std::string::String::from("northeast-1"); 
 
     return FNode {
       uuid: uuid.to_owned(),
       host: String::from("localhost"),
 
-      region: region,
+      region: region.to_owned(),
       node_type: std::string::String::from("SN"),
 
       flags_s: 0,
@@ -231,7 +229,7 @@ impl FNode{
       group_hash: String::from(""),
       dynamo_client: dynamoc::get_dynamo_client().await,
 
-      session: ObjectSession::new(uuid, String::from("N")),
+      session: ObjectSession::new(uuid.to_owned(), String::from("N")),
       logger: FortunateLogger::new(String::from("node")),
     }
   } 
@@ -274,6 +272,19 @@ impl FNode{
   }
 
   pub async fn insert_node_signal(&mut self) -> Result<(), Error> {
+
+    self.logger.info(
+      format!("Acquire for {} from {}; mod:{:?}", &self.region, &self.uuid, 0)
+            .as_str()
+    );
+
+    crate::matrix::ObjectLock::acquire(
+      &mut self.session.cimpl,
+      &self.region,
+      &self.uuid,
+      0
+    ).await;
+
     let hdr = dynamoc::DynamoHandler::node();
     let mut data = HashMap::<String, String>::new();
 
@@ -281,14 +292,21 @@ impl FNode{
 
     data.insert(String::from("epoch"), signal.epoch.to_owned());
     data.insert(String::from("signal_key"), signal.signal_key);
-    data.insert(String::from("group"), signal.group);
+    data.insert(String::from("region"), signal.group);
     data.insert(String::from("timestamp"), signal.timestamp);
     data.insert(String::from("signal_value"), signal.signal_value);
     data.insert(String::from("data"), signal.data.to_owned().unwrap());
 
     let last_singal_emitted = tsgen::get_time();
     let request = hdr.make_insert_request(&self.dynamo_client, data);
-    println!("{} node signal inserted: {} {}", last_singal_emitted, signal.epoch, signal.data.unwrap().to_owned());
+    
+    self.logger.info(
+      format!(
+        "{} node signal inserted: {} {}", 
+        last_singal_emitted, 
+        signal.epoch, 
+        signal.data.unwrap().to_owned()
+      ).as_str());
 
     self.session.cimpl.set::<String, String>(
       std::string::String::from("last_signal_emitted"),
