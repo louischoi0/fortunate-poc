@@ -111,7 +111,10 @@ async fn program() {
             'nonce': 'asdfdsfsf',
         ";
 
-    let ef = FortunateEventFinalizer::new().await;
+    let ef = FortunateEventFinalizer::new(
+      &std::string::String::from("northeast-1")
+    ).await;
+
     let p = String::from(payload);
     let epoch = "551435".to_string();
 
@@ -123,16 +126,13 @@ async fn program() {
     let epoch = std::string::String::from(&args[2]);
     let payload = std::string::String::from("token:asdfasfd1223rwefwefewf;nonce:asdfdsfsf");
 
-    let mut event_generator = event::PEventGenerator {
-        uuid: std::string::String::from("abcd"),
-        seed: 0,
-        ts: tsgen::get_ts(),
-        dynamo_client: crate::dynamoc::get_dynamo_client().await
-    };
+    let mut event_generator = event::PEventGenerator::new(
+        &std::string::String::from("matrix-0")
+    ).await;
 
     let commiter = event::EventCmtr::new().await;
 
-    let res = event_generator.generate_event_pe2(&epoch, &payload).await;
+    let res = event_generator.generate_event_pe2(&payload).await;
     let event = res.unwrap();
 
     let result = commiter.commit_event(&event).await;

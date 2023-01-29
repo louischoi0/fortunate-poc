@@ -102,8 +102,15 @@ const EVENT_SCHEMA: DynamoSchema = DynamoSchema {
   columns: vec![ ],
 };
 
-type QuerySetSelectAllResult = Option<Vec<HashMap<String, AttributeValue, RandomState>>>;
-type QuerySetGetResult = Option<HashMap<String, AttributeValue, RandomState>>;
+const EVENTBLOCK_SCHEMA: DynamoSchema = DynamoSchema {
+  table_name: "event_blocks",
+  partition_key: "epoch",
+  sort_key: "timestamp",
+  columns: vec![ ],
+};
+
+type QuerySetSelectAllResult = Option<Vec<HashMap<String, DataType, RandomState>>>;
+type QuerySetGetResult = Option<HashMap<String, DataType, RandomState>>;
 
 pub enum SelectQuerySetResult {
   All(QuerySetSelectAllResult),
@@ -222,6 +229,17 @@ impl DynamoQueriable for aws_sdk_dynamodb::client::fluent_builders::GetItem {
 
 impl DynamoHandler {
 
+  pub fn convert_to_datatype(
+    data: &AttributeValue
+  ) -> Result<DataType, ()> {
+
+    match data {
+      AttributeValue::S(x) => Ok(DataType::S(x.to_owned())),
+      AttributeValue::N(x) => Ok(DataType::U32(x.parse::<u32>().unwrap())),
+      _ => panic!("Attributetype can not be converted.") 
+    }
+  }
+
   pub fn convert_to_dynamo_attributes(
     data: &crate::primitives::DataType
   ) -> Result<AttributeValue, ()> {
@@ -233,11 +251,17 @@ impl DynamoHandler {
       crate::primitives::DataType::U16(x) => Ok(AttributeValue::N(x.to_string())),
       crate::primitives::DataType::U32(x) => Ok(AttributeValue::N(x.to_string())),
       crate::primitives::DataType::U64(x) => Ok(AttributeValue::N(x.to_string())),
+      _ => panic!("Datatype can not be converted.")
     }
 
   }
 
-  pub fn make_insert_request(&self, client: &Client, data: HashMap<String, String>) -> PutItem {
+  pub fn make_insert_request(
+    &self, 
+    client: &Client, 
+    data: HashMap<String, String>
+  ) -> PutItem {
+
     let mut h = client.put_item()
       .table_name(self.schema.table_name);
 
@@ -259,6 +283,20 @@ impl DynamoHandler {
     Ok(true)
   }
 
+  fn convert_attr_hashmap(
+    data: &HashMap<String, AttributeValue>
+  ) -> HashMap<String, DataType> {
+    let mut result = HashMap::<String, DataType>::new();
+
+    for (k, v) in data.iter() {
+      result.insert(
+        k.to_owned(),
+        DynamoHandler::convert_to_datatype(v).unwrap()
+      );
+    }
+    result
+  }
+
   pub async fn q<'a>(
     &self, 
     client: &Client, 
@@ -269,12 +307,23 @@ impl DynamoHandler {
       DynamoSelectQuerySubType::All => {
         let mut q = aws_sdk_dynamodb::client::fluent_builders::Query::build(client, qctx);
         let rspn = q.send().await;
-        Ok((SelectQuerySetResult::All(rspn.unwrap().items)))
+        let items = rspn.unwrap().items.unwrap();
+
+        let mut _items = vec![];
+
+        for m in items.iter() {
+          let _m = DynamoHandler::convert_attr_hashmap(m);
+          _items.push(_m);
+        }
+
+        Ok((SelectQuerySetResult::All(Some(_items))))
       },
       DynamoSelectQuerySubType::One => {
         let mut q = aws_sdk_dynamodb::client::fluent_builders::GetItem::build(client, qctx);
         let rspn = q.send().await;
-        Ok((SelectQuerySetResult::One(rspn.unwrap().item)))
+        Ok((SelectQuerySetResult::One(
+          Some(DynamoHandler::convert_attr_hashmap(&rspn.unwrap().item.unwrap()))
+        )))
       },
       _ => panic!("TODO..")
     }
@@ -314,6 +363,10 @@ impl DynamoHandler {
 
   pub fn event() -> Self {
     Self::new(EVENT_SCHEMA)
+  }
+
+  pub fn eventblock() -> Self {
+    Self::new(EVENTBLOCK_SCHEMA)
   }
 
 }

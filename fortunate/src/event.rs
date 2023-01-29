@@ -5,11 +5,17 @@ use rand::Rng;
 
 use crate::cursor;
 use crate::dynamoc;
+use crate::flog::FortunateLogger;
+use crate::matrix;
+use crate::matrix::MatrixComponent;
 use crate::node::{ NodeSignalBase, NodeSignalKey };
+use crate::primitives::dunwrap_s;
+use crate::sessions::RedisImpl;
 use crate::tsgen;
 use crate::node;
 use crate::cursor::{ Cursor };
 use log::{debug, error, info, trace, warn};
+use async_trait::async_trait;
 
 use aws_sdk_dynamodb::{ Client, };
 
@@ -188,18 +194,43 @@ impl EventCmtr {
   }
 }
 
-#[derive(std::clone::Clone)]
 pub struct PEventGenerator {
   pub uuid: std::string::String, 
   pub ts: std::string::String,
 
   pub dynamo_client: aws_sdk_dynamodb::Client,
+  pub cimpl: RedisImpl,
+
   pub seed: usize,
+  pub logger: FortunateLogger,
+  pub region: String,
 }
+
+#[async_trait]
+impl matrix::MatrixComponent for PEventGenerator {
+
+  async fn matrix_lock_acquire(
+      &mut self,
+    ) -> bool {
+
+    self.logger.info(
+      format!("Acquire for {} from {}; mod:{:?}", &self.region, &self.uuid, 0)
+            .as_str()
+    );
+
+    crate::matrix::ObjectLock::acquire(
+      &mut self.cimpl,
+      &self.region,
+      &self.uuid,
+      0,
+    ).await
+  }
+
+} 
 
 impl PEventGenerator {
 
-  pub async fn new() -> PEventGenerator {
+  pub async fn new(region: &std::string::String) -> PEventGenerator {
     let ts =  tsgen::get_ts();
     let uuid = String::from("PEVGEN#") + &ts;
 
@@ -207,18 +238,31 @@ impl PEventGenerator {
       uuid: uuid, 
       seed: 0,
       ts: ts,
-      dynamo_client: crate::dynamoc::get_dynamo_client().await
+      dynamo_client: crate::dynamoc::get_dynamo_client().await,
+      cimpl: crate::sessions::RedisImpl::new(Some("peventgenerator".to_string())),
+      logger: FortunateLogger::new(
+        std::string::String::from("PEventGenerator")
+      ),
+      region: region.to_owned()
     }
   }
 
-  pub async fn get_node_signalkeys(&self, epoch: &String) -> std::vec::Vec<node::NodeSignalKey> {
+  pub async fn get_node_signalkeys(&self, epoch: &String) -> 
+    Result<std::vec::Vec<node::NodeSignalKey>, ()> {
     let signals = 
       node::FNode::get_node_s_signals(&self.dynamo_client, epoch).await;
 
-    signals.iter()
-      .map(|x| x.get("data").unwrap().as_s().unwrap().to_owned() )
+    let _signals: Vec<node::NodeSignalKey> = signals.iter()
+      .map(|x| dunwrap_s(x.get("data").unwrap()) )
       .map(|x| node::NodeSignalBase::parse_key(&x))
-      .collect()
+      .collect();
+
+    if (_signals.len() > 0) {
+      Ok(_signals)
+    }
+    else {
+      Err(())
+    }
   }
 
   pub async fn get_random_node_signals<'a>(&self, signals: &'a Vec<NodeSignalKey>, signal_num: usize, result: &mut Vec<&'a NodeSignalKey>) {
@@ -232,27 +276,37 @@ impl PEventGenerator {
 
   }
 
+
   pub async fn generate_event_pe2(
-    &self,
-    epoch: &std::string::String,
+    &mut self,
     payload: &std::string::String,
   ) -> std::result::Result<Event, Error> {
 
-    let signals = self.get_node_signalkeys(epoch).await;
-    let mut ref_signals = std::vec::Vec::<&NodeSignalKey>::new();
+    self.matrix_lock_acquire().await;
+    let epoch = 
+      matrix::Matrix::get_prev_epoch(&self.region, &mut self.cimpl, &self.uuid).await;
 
-    self.get_random_node_signals(&signals, 2, &mut ref_signals).await;
+    let signals = self.get_node_signalkeys(&epoch).await;
+    let mut ref_signals = std::vec::Vec::<&NodeSignalKey>::new();
 
     let _fn = 
       |arr: &Vec<&NodeSignalKey>| arr.iter().fold(true, |x: bool, y: &&NodeSignalKey| x && true ); //TODO
 
+    match &signals {
+      Ok(x) => {
+        self.get_random_node_signals(x, 2, &mut ref_signals).await;
+      },
+      _ => panic!("there is no node signals.")
+    };
+
     self.generate_event_from_signals(
-      epoch,
+      &epoch,
       payload,
       &EventType::PE(String::from("000001")),
       &ref_signals,
       &_fn
     )
+
   }
 
   pub fn generate_event_from_signals(

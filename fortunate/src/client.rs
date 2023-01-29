@@ -2,9 +2,12 @@ use std::{collections::HashMap, hash::Hash};
 
 use clap::{arg, Command};
 use redis::Commands;
+use tokio::time::{sleep, Duration};
 
+use crate::{payload, hashlib};
 use crate::{node::FNode, sessions::RedisImpl};
 use crate::{finalizer::FortunateNodeSignalFinalizer};
+
 
 pub fn cli() -> Command {
     Command::new("/usr/local/bin/fortunate")
@@ -34,6 +37,13 @@ pub fn cli() -> Command {
                 .about("start fortunate")
         )
         .subcommand(
+          Command::new("finalize")
+                .arg(arg!(<COMPONENT> "component"))
+                .arg(arg!(<EPOCH> "epoch"))
+                .arg(arg!(<PREVEPOCH> "prevepoch"))
+                .about("finalize event block")
+        )
+        .subcommand(
           Command::new("verify")
                 .about("verify block or signals or event")
                 .arg(arg!(<COMPONENT> "component"))
@@ -48,7 +58,36 @@ pub fn cli() -> Command {
       
 }
 
-pub fn generate_event_periodically() -> () {
+pub async fn generate_event_periodically(pe: &mut crate::event::PEventGenerator) -> () {
+  let loop_interval = 5000;
+  let commiter = crate::event::EventCmtr::new().await;
+
+  while (true) {
+    let mut payload = HashMap::<String,String>::new();
+    payload.insert(
+      std::string::String::from("nonce"), 
+      hashlib::uuid(8)
+    );
+
+    payload.insert(
+      std::string::String::from("token"), 
+      std::string::String::from("abcdefghijklmnopqrstuvwxyz"),
+    );
+
+    let payload = payload::Payload::ser(&payload);
+
+    let epoch = 
+      crate::matrix::Matrix::get_prev_epoch(&pe.region, &mut pe.cimpl, &pe.uuid).await;
+    
+    let p = payload.buffer.unwrap().to_owned();
+
+    let res = pe.generate_event_pe2(&p).await.unwrap();
+    println!("peventgenerator: {}:{}, {:?}", epoch, p, res);
+
+    commiter.commit_event(&res).await;
+    sleep(Duration::from_millis(loop_interval)).await;
+  }
+
 
 }
 
@@ -117,6 +156,34 @@ pub async fn client_main() {
 
         matrix.process().await;
        },
+
+      Some(("pubevent", sub_matches)) => {
+
+        let mut pev = crate::event::PEventGenerator::new(
+          &std::string::String::from("matrix:northeast-1")
+        ).await;
+
+        generate_event_periodically(&mut pev).await;
+
+      },
+
+      Some(("finalize", sub_matches)) => {
+        let component = sub_matches.get_one::<String>("COMPONENT").expect("required.");
+
+        if (component == "event") {
+          let epoch = sub_matches.get_one::<String>("EPOCH").expect("required.");
+          let prev_epoch = sub_matches.get_one::<String>("PREVEPOCH").expect("required.");
+          
+          let fnz = crate::finalizer::FortunateEventFinalizer::new(
+            &std::string::String::from("northeast-1")
+          ).await;
+          
+          fnz.finalize_eventblock(
+            epoch, 
+            None
+          ).await;
+        };
+      }
 
       Some(("verify", sub_matches)) => {
         let component = sub_matches.get_one::<String>("COMPONENT").expect("required.");

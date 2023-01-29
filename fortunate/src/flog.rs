@@ -1,7 +1,7 @@
 use log::{debug, error, info, trace, warn};
 const LOGGING_FILE: &str = "log4rs.yaml";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FortunateLogger {
   pub program_name: String,
 }

@@ -14,3 +14,11 @@ pub struct Pair <K, V>{
   pub k: K,
   pub v: V
 }
+
+
+pub fn dunwrap_s(d: &DataType) -> std::string::String {
+  match d {
+    DataType::S(x) => x.to_owned(),
+    _ => panic!("")
+  }
+}

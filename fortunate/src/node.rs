@@ -4,6 +4,7 @@ use rand::Rng;
 use log::{debug, error, info, trace, warn};
 use redis::Commands;
 
+use crate::primitives::DataType;
 use crate::sessions::RedisImpl;
 use crate::{dynamoc, matrix};
 use crate::matrix::ObjectSession;
@@ -186,12 +187,17 @@ impl FNode{
   } */
 
 
-  pub async fn get_node_s_signals(client: &Client, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
+  pub async fn get_node_s_signals(client: &Client, epoch: &String) -> Vec<HashMap<String, DataType>> {
     let _nodesignal_dimpl = dynamoc::DynamoHandler::nodesignal();
 
     let qctx = crate::dynamoc::DynamoSelectQueryContext {
-      table_name: &"events",
-      conditions: None,
+      table_name: &"node_signals",
+      conditions: Some(vec![
+        crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
+            k: "epoch",
+            v: crate::primitives::DataType::S(epoch.to_owned()),
+        },
+      ]),
       query_subtype: dynamoc::DynamoSelectQuerySubType::All
     };
 

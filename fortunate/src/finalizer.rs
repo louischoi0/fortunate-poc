@@ -3,35 +3,132 @@ use sha2::digest::block_buffer::Block;
 use crate::block::BlockBuffer;
 use crate::dynamoc;
 use crate::dynamoc::DynamoSelectQueryContext;
-use crate::event::EventBuffer;
+use crate::event::{EventBuffer, Event};
 use crate::node;
 
 use crate::primitives;
 
+use crate::primitives::{DataType, dunwrap_s};
 use crate::tsgen;
 use std::collections::{HashMap};
 use hex_literal::hex;
 use sha2::{Sha256, Sha512, Digest};
 
 use log::{error, info, debug};
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait BlockFinalizable<T> {
+
+  fn reduce_records(
+    &self,
+    records: &Vec<HashMap<String, DataType>>,
+  ) -> String;
+
+  async fn build_block(
+    &self,
+    epoch: &std::string::String,
+    prev_blockhash: &std::string::String,
+    records: &Vec<HashMap<String, DataType>>,
+    finalized_at: &std::string::String,
+  ) -> crate::block::BlockBuffer;
+
+  async fn get_block(
+    &self,
+    epoch: &std::string::String,
+  ) -> HashMap<String, DataType>;
+
+}
+
+#[async_trait]
+impl <Event> BlockFinalizable<Event> for FortunateEventFinalizer {
+
+  fn reduce_records(
+    &self,
+    events: &Vec<HashMap<String, DataType>>,
+  ) -> String {
+    let mut ret = String::from("");
+
+    for e in events.iter() {
+      ret += dunwrap_s(
+        e.get("buffer").unwrap()
+      ).as_str()
+    };
+
+    ret
+  }
+
+  async fn build_block(
+    &self,
+    epoch: &std::string::String,
+    prev_blockhash: &std::string::String,
+    records: &Vec<HashMap<String, DataType>>,
+    finalized_at: &std::string::String
+  ) -> crate::block::BlockBuffer {
+    let buffer = String::from(epoch);
+    let s: &dyn BlockFinalizable<Event> = self;
+
+    let event_block_buffer = s.reduce_records(records);
+
+    crate::block::BlockBuffer {
+      buffer: buffer + prev_blockhash + finalized_at
+    }
+  }
+
+  async fn get_block(
+    &self,
+    epoch: &std::string::String,
+  ) -> HashMap<String, DataType> {
+
+    let qctx = DynamoSelectQueryContext {
+      table_name: &"event_blocks",
+      conditions: Some(vec![
+        crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
+            k: "epoch",
+            v: crate::primitives::DataType::S(epoch.to_owned())
+        },
+      ]),
+      query_subtype: dynamoc::DynamoSelectQuerySubType::One
+    };
+
+    let items = self._event_dimpl.q(
+      &self.dynamo_client,
+      &qctx 
+    ).await.unwrap();
+
+    match items {
+      dynamoc::SelectQuerySetResult::One(x) 
+        => x.unwrap(), 
+      dynamoc::SelectQuerySetResult::All(x) 
+        => panic!("get block used invalid query sub type.")
+    }
+  }
+}
 
 pub struct FortunateEventFinalizer {
   _event_dimpl: dynamoc::DynamoHandler,
+  _eventblock_dimpl: dynamoc::DynamoHandler,
+
   dynamo_client: Client,
+  region: std::string::String,
 }
 
 impl FortunateEventFinalizer {
-  pub async fn new() -> Self {
+  pub async fn new(region: &std::string::String) -> Self {
     FortunateEventFinalizer {
       _event_dimpl: dynamoc::DynamoHandler::event(),
+      _eventblock_dimpl: dynamoc::DynamoHandler::eventblock(),
       dynamo_client: dynamoc::get_dynamo_client().await,
+      region: region.to_owned()
     }
   }
+
+
 
   pub async fn get_events(
     &self, 
     epoch: &String
-  ) -> Result<Vec<HashMap<String, AttributeValue>>, ()> {
+  ) -> Result<Vec<HashMap<String, DataType>>, ()> {
     let qctx = DynamoSelectQueryContext {
         table_name: &"events",
         conditions: Some(vec![
@@ -50,6 +147,80 @@ impl FortunateEventFinalizer {
         dynamoc::SelectQuerySetResult::All(x) => Ok(x.unwrap()),
         _ => panic!("get events uses invalid query sub type.")
     }
+
+  }
+
+  pub fn hash_eventblock(
+    &self, 
+    blockbuffer: &BlockBuffer
+  ) -> crate::block::BlockHash {
+    let mut h = Sha256::new();
+    h.update(String::from(blockbuffer.buffer.to_owned()));
+    crate::block::BlockHash { hash: format!("{:X}", h.finalize()) }
+  }
+  
+  pub async fn commit_block(
+    &self,
+    epoch: &String, 
+    block: &crate::block::BlockBuffer,
+    ts: &String, 
+    prev_blockhash: &String
+  ) -> Result<crate::block::BlockHash, aws_sdk_dynamodb::Error> {
+    let mut data = HashMap::<String,String>::new();
+    let blockhash = self.hash_eventblock(&block);
+
+    data.insert(String::from("epoch"), epoch.to_owned());
+    data.insert(String::from("region"), self.region.to_owned());
+    data.insert(String::from("hash"), blockhash.hash.to_owned());
+    data.insert(String::from("block"), block.buffer.to_owned());
+    data.insert(String::from("ts"), ts.to_owned());
+    data.insert(String::from("prev_blockhash"), prev_blockhash.to_owned());
+    data.insert(String::from("next_blockhash"), String::from(""));
+    data.insert(String::from("finalized"), String::from("y"));
+
+    let request = self._eventblock_dimpl.make_insert_request(&self.dynamo_client, data);
+    self._event_dimpl.commit(request).await
+      .expect("dynamo operation failed some reason");
+
+    Ok(blockhash)
+  }
+
+  pub async fn finalize_eventblock(
+    &self,
+    epoch: &std::string::String, 
+    prev_epoch: Option<&String>,
+  ) -> std::option::Option<crate::block::BlockHash> {
+    let mut _prev_block_hash = String::from("");
+    let mut _prev_epoch = None;
+    let s: &dyn BlockFinalizable<Event> = self;
+
+    match prev_epoch {
+      Some(x) => { 
+        _prev_epoch = Some(prev_epoch.unwrap());
+        _prev_block_hash = dunwrap_s(s.get_block(&(prev_epoch.unwrap())).await.get("hash").unwrap());
+      },
+      None => {
+        _prev_epoch = Some(&String::from("GENESS"));
+        _prev_block_hash = String::from("GENESS");
+      }
+    }
+
+    let events = self.get_events(epoch).await.expect("get event failed.");
+    let finalized_at = tsgen::get_ts();
+    let s: &dyn BlockFinalizable<Event> = self;
+
+    let blockbuffer
+      = s.build_block(epoch, &_prev_block_hash,&events, &finalized_at).await;
+
+    self.commit_block(
+      &epoch, 
+      &blockbuffer, 
+      &finalized_at, 
+      &_prev_block_hash
+    ).await.expect("commit block failed some reason...");
+
+    let blockhash = self.hash_eventblock(&blockbuffer);
+    Some(blockhash)
 
   }
 
@@ -126,7 +297,7 @@ impl FortunateNodeSignalFinalizer {
     fnz
   }
 
-  pub async fn get_node_signals(&self, epoch: &String) -> Vec<HashMap<String, AttributeValue>> {
+  pub async fn get_node_signals(&self, epoch: &String) -> Vec<HashMap<String, DataType>> {
     let qctx = DynamoSelectQueryContext {
       table_name: &"node_signals",
       conditions: Some(vec! [
@@ -183,29 +354,32 @@ impl FortunateNodeSignalFinalizer {
     let block = self.get_block(epoch).await;
     let signals = self.get_node_signals(epoch).await;
 
-    let ts = block.get("ts").unwrap().as_s().unwrap();
-    let prev_blockhash = block.get("prev_blockhash").unwrap().as_s().unwrap();
+    let ts = dunwrap_s(block.get("ts").unwrap());
+    let prev_blockhash = dunwrap_s(block.get("prev_blockhash").unwrap());
 
-    let _block = self.build_block(epoch, &prev_blockhash, &signals, ts);
+    let _block = self.build_block(epoch, &prev_blockhash, &signals, &ts);
     let computed = self.hash_nodesignalblock(&_block);
     
-    let origin = crate::block::BlockHash { hash: block.get("hash").unwrap().as_s().unwrap().to_owned() };
+    let origin = crate::block::BlockHash { hash: dunwrap_s(block.get("hash").unwrap()) };
 
     computed == origin
   }
 
-  pub fn hash_nodesignalblock(&self, blockbuffer: &BlockBuffer) -> crate::block::BlockHash {
+  pub fn hash_nodesignalblock(
+    &self, 
+    blockbuffer: &BlockBuffer
+  ) -> crate::block::BlockHash {
     let mut h = Sha256::new();
     h.update(String::from(blockbuffer.buffer.to_owned()));
     crate::block::BlockHash { hash: format!("{:X}", h.finalize()) }
   }
 
-  fn reduce_signals(&self, signals: &Vec<HashMap<String, AttributeValue>>) -> String {
+  fn reduce_signals(&self, signals: &Vec<HashMap<String, DataType>>) -> String {
     let mut ret = String::from("");
 
     for sig in signals.iter() {
       let data = sig.get("data").unwrap();
-      ret += data.as_s().unwrap();
+      ret += dunwrap_s(data).as_str();
     }
 
     ret
@@ -257,7 +431,7 @@ impl FortunateNodeSignalFinalizer {
     &self, 
     epoch: &String,
     prev_blockhash: &String,
-    signals: &Vec<HashMap<String, AttributeValue>>,
+    signals: &Vec<HashMap<String, DataType>>,
     finalized_at: &String,    
   ) -> crate::block::BlockBuffer {
     let buffer = String::from(epoch);
@@ -266,7 +440,7 @@ impl FortunateNodeSignalFinalizer {
     crate::block::BlockBuffer { buffer: buffer + prev_blockhash + &finalized_at + &signal_buffer_block }
   }
 
-  pub async fn get_block(&self, epoch: &String) -> HashMap<String, AttributeValue> {
+  pub async fn get_block(&self, epoch: &String) -> HashMap<String, DataType> {
     let qctx = DynamoSelectQueryContext {
       table_name: &"node_signal_blocks",
       conditions: Some(vec![
@@ -293,7 +467,7 @@ impl FortunateNodeSignalFinalizer {
 
   pub async fn get_block_hash(&self, epoch: &String) -> String {
     let res = self.get_block(epoch).await;
-    res.get("hash").unwrap().as_s().unwrap().to_owned()
+    dunwrap_s(res.get("hash").unwrap())
   }
 
 

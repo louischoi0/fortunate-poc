@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::future::Future;
 use tokio::time::{sleep, Duration};
 use redis::Commands;
 
 use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSignalFinalizer};
 use crate::flog::FortunateLogger;
+use async_trait::async_trait;
 
 pub struct Matrix {
   /**
@@ -20,13 +22,55 @@ pub struct Matrix {
   pub is_genesis: bool, 
 
   nodsignal_finalizer: FortunateNodeSignalFinalizer,
+
   logger: FortunateLogger,
   
   pub cimpl: crate::sessions::RedisImpl,
   pub created_at: crate::tsgen::Timestamp,
 }
 
+#[async_trait]
+pub trait MatrixComponent {
+
+  /* component can only hold shared lock. */
+  async fn matrix_lock_acquire(
+    &mut self
+  ) -> bool;
+
+}
+
+
 impl Matrix {
+
+  pub async fn get_prev_epoch(
+    region: &std::string::String,
+    cimpl: &mut RedisImpl,
+    requester: &std::string::String,
+  ) -> std::string::String {
+
+    ObjectLock::acquire(
+      cimpl, region, requester, 0
+    ).await;
+
+    cimpl.redis_connection.get::<String,String>(
+      format!("{}:prev_epoch", region)
+    ).unwrap()
+  }
+
+  pub async fn get_epoch(
+    region: &std::string::String,
+    cimpl: &mut RedisImpl,
+    requester: &std::string::String,
+  ) -> std::string::String {
+
+    ObjectLock::acquire(
+      cimpl, region, requester, 0
+    ).await;
+
+    cimpl.redis_connection.get::<String,String>(
+      format!("{}:epoch", region)
+    ).unwrap()
+  }
 
   pub async fn new(uuid: &std::string::String) -> Self {
     
