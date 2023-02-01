@@ -236,7 +236,7 @@ impl FNode{
       dynamo_client: dynamoc::get_dynamo_client().await,
 
       session: ObjectSession::new(uuid.to_owned(), String::from("N")),
-      logger: FortunateLogger::new(String::from("node")),
+      logger: FortunateLogger::new("node"),
     }
   } 
 

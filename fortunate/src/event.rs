@@ -241,7 +241,7 @@ impl PEventGenerator {
       dynamo_client: crate::dynamoc::get_dynamo_client().await,
       cimpl: crate::sessions::RedisImpl::new(Some("peventgenerator".to_string())),
       logger: FortunateLogger::new(
-        std::string::String::from("PEventGenerator")
+        "PEventGenerator"
       ),
       region: region.to_owned()
     }

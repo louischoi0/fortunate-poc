@@ -3,6 +3,7 @@ use std::future::Future;
 use tokio::time::{sleep, Duration};
 use redis::Commands;
 
+use crate::finalizer::{BlockFinalizable, FortunateEventFinalizer};
 use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSignalFinalizer};
 use crate::flog::FortunateLogger;
 use async_trait::async_trait;
@@ -22,6 +23,7 @@ pub struct Matrix {
   pub is_genesis: bool, 
 
   nodsignal_finalizer: FortunateNodeSignalFinalizer,
+  event_finalizer: FortunateEventFinalizer,
 
   logger: FortunateLogger,
   
@@ -86,10 +88,14 @@ impl Matrix {
       is_finializing: false,
 
       nodsignal_finalizer: FortunateNodeSignalFinalizer::new(
-        &uuid[7..uuid.len()].to_string()
+        &uuid[7..uuid.len()].to_string() //TODO CHECK
       ).await,
 
-      logger: FortunateLogger::new(String::from("node")),
+      event_finalizer: FortunateEventFinalizer::new(
+        uuid
+      ).await,
+
+      logger: FortunateLogger::new("node"),
       cimpl: crate::sessions::RedisImpl::new(Some(uuid.to_owned())),
       created_at: tsgen::get_ts_c(),
     };
@@ -115,30 +121,48 @@ impl Matrix {
     );
   }
 
-  async fn commit_new_nodesignal_block(
+  async fn commit_tblock<T> (
+    &self,
+    fnz: &dyn BlockFinalizable<T>
+  ) {
+  // -> crate::block::BlockHash {
+
+  }
+
+  async fn commit_component_blocks(
     &self,
     _epoch: &std::string::String,
     _prev_epoch: &Option<std::string::String>,
-  ) -> crate::block::BlockHash {
+  ) {
 
-    match &_prev_epoch {
-      Some(pe) => {
-            self.nodsignal_finalizer.finalize_nodesignalblock(
-                &String::from(_epoch), 
-                Some(pe)
-            )
-                .await
-                .expect("")
-      },
-      None => { // when block is genesis
-            self.nodsignal_finalizer.finalize_nodesignalblock(
-                &String::from(_epoch), 
-                None,
-            )
-                .await
-                .expect("")
-      }
-    }
+    let nodesignalblock_hash = self.nodsignal_finalizer.finalize_nodesignalblock(
+        &String::from(_epoch), 
+        _prev_epoch.as_ref()
+    )
+        .await
+        .expect("nodesignal block commit failed");
+
+    let eventblock_hash = self.event_finalizer.finalize_eventblock(
+        _epoch, _prev_epoch.as_ref()
+     ).await
+      .expect("nodesignal block commit failed");
+  }
+
+  pub async fn epoch_changed_callback(
+    &mut self, 
+    _epoch: std::string::String
+  ) {
+    self.start_finalizing().await;
+
+    self.commit_component_blocks(
+      &self.epoch, &self.prev_epoch
+    ).await;
+
+    self.prev_epoch = Some(self.epoch.to_owned());
+    self.epoch = _epoch;
+
+    self.commit_matrix_session();
+    self.end_finalizing().await;
   }
 
   pub async fn process(&mut self) -> () {
@@ -155,24 +179,10 @@ impl Matrix {
         self.logger.info("session is working.");
       }
 
-      {
-        //session = self.get_matrix_session();
-      }
-
       _epoch = tsgen::get_epoch();
 
       if (_epoch != self.epoch) {
-        self.start_finalizing().await;
-
-        self.commit_new_nodesignal_block(
-          &self.epoch, &self.prev_epoch
-        ).await;
-
-        self.prev_epoch = Some(self.epoch.to_owned());
-        self.epoch = _epoch;
-
-        self.commit_matrix_session();
-        self.end_finalizing().await;
+        self.epoch_changed_callback(_epoch).await;
       }
 
       if (self.check_exit_flag_and_terminate(&session)) { break; }
@@ -239,6 +249,7 @@ impl Matrix {
 
 }
 
+const ObjectLockLogger: crate::flog::FortunateLogger  = crate::flog::FortunateLogger::new("objectlock");
 
 pub struct ObjectLock { }
 
@@ -313,12 +324,10 @@ impl ObjectLock {
     mode: u8
   ) -> bool {
     let interval = 10;
-    /**
-    ObjectLock::LOCK_LOGGER.info(
+    ObjectLockLogger.info(
       format!("Acquire for {} from {}; mod:{:?}", object_uuid, requester, mode)
             .as_str()
     );
-    */
 
     loop {
       let lock = ObjectLock::get(cimpl, object_uuid, "object_lock");
@@ -355,7 +364,6 @@ pub struct ObjectSession {
   pub object_type: String,
 
   // object_lock: ObjectLock, TODO
-
 
   /**
    * 0 no flag 

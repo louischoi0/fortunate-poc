@@ -4,6 +4,8 @@ use clap::{arg, Command};
 use redis::Commands;
 use tokio::time::{sleep, Duration};
 
+use crate::finalizer::{FortunateEventFinalizer, BlockVerifiable, BlockFinalizable};
+use crate::primitives::dunwrap_s;
 use crate::{payload, hashlib};
 use crate::{node::FNode, sessions::RedisImpl};
 use crate::{finalizer::FortunateNodeSignalFinalizer};
@@ -48,7 +50,7 @@ pub fn cli() -> Command {
                 .about("verify block or signals or event")
                 .arg(arg!(<COMPONENT> "component"))
                 .arg_required_else_help(true)
-                .arg(arg!(<HASHKEY> "hashkey"))
+                .arg(arg!(<EPOCH> "epoch"))
                 .arg_required_else_help(true)
         )
         .subcommand(
@@ -180,16 +182,16 @@ pub async fn client_main() {
           
           fnz.finalize_eventblock(
             epoch, 
-            None
+            Some(prev_epoch)
           ).await;
         };
       }
 
       Some(("verify", sub_matches)) => {
         let component = sub_matches.get_one::<String>("COMPONENT").expect("required.");
-        let hash_key= sub_matches.get_one::<String>("HASHKEY").expect("required.");
+        let epoch = sub_matches.get_one::<String>("EPOCH").expect("required.");
 
-        println!("verify {}: {}", component, hash_key);
+        println!("verify {}: {}", component, epoch);
 
         let region = std::string::String::from("northeast-1");
 
@@ -198,16 +200,53 @@ pub async fn client_main() {
               FortunateNodeSignalFinalizer::new(&region).await;
 
           fnz.logger.info(
-            format!("verify nodesignalblock {}", hash_key).as_str()
+            format!("verify nodesignalblock {}", epoch).as_str()
           );
 
-          let verified = fnz.verify_nodesignalblock(hash_key).await;
+          let verified = fnz.verify_nodesignalblock(epoch).await;
 
           assert!(verified);
 
           fnz.logger.info(
-            format!("successfully verified: nodesignalblock {}", hash_key).as_str()
+            format!("successfully verified: nodesignalblock {}", epoch).as_str()
           );
+        }
+
+        else if (component == "eventblock") {
+
+          let fnz = 
+            FortunateEventFinalizer::new(&region).await;
+
+          let s: &dyn BlockFinalizable<crate::event::Event> = &fnz;
+          let v: &dyn BlockVerifiable<crate::event::Event> = &fnz;
+
+
+          let hm_block = s.get_block(epoch).await;
+          v._get(
+            &dunwrap_s(
+              hm_block.get("hash").unwrap())
+          );
+
+          let block_hash = dunwrap_s(
+            hm_block.get("hash") .unwrap()
+          );
+
+          let events = fnz.get_events(epoch).await.unwrap();
+
+          for e in events.iter() {
+            println!("{:?}", e.get("buffer").unwrap())
+          };
+
+          println!("{:?}", events.len());
+
+          let verified = v.verify_block(&hm_block, &events);
+
+          if (verified) {
+            println!("Verified Successfully.")
+          }
+          else {
+            println!("Verify Failed.")
+          }
         }
 
        },

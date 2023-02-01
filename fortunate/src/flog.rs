@@ -3,7 +3,7 @@ const LOGGING_FILE: &str = "log4rs.yaml";
 
 #[derive(Debug, Clone)]
 pub struct FortunateLogger {
-  pub program_name: String,
+  pub program_name: &'static str,
 }
 
 impl FortunateLogger {
@@ -11,7 +11,7 @@ impl FortunateLogger {
     log4rs::init_file(LOGGING_FILE, Default::default()).unwrap();
   }
 
-  pub fn new(program_name: String) -> Self {
+  pub const fn new(program_name: &'static str) -> Self {
     let logger = FortunateLogger {
       program_name: program_name
     };
@@ -19,23 +19,23 @@ impl FortunateLogger {
   }
  
   pub fn debug(&self, msg: &str) {
-    debug!("{}", msg);
+    debug!("{}:{}", self.program_name, msg);
   }
 
   pub fn error(&self, msg: &str) {
-    error!("{}", msg);
+    error!("{}:{}", self.program_name, msg);
   }
 
   pub fn info(&self, msg: &str) {
-    info!("{}", msg);
+    info!("{}:{}", self.program_name, msg);
   }
 
   pub fn trace(&self, msg: &str) {
-    trace!("{}", msg);
+    trace!("{}:{}", self.program_name, msg);
   }
 
   pub fn warn(&self, msg: &str) {
-    warn!("{}", msg);
+    warn!("{}:{}", self.program_name, msg);
   }
 
 }

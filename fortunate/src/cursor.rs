@@ -12,6 +12,14 @@ impl Cursor {
     s
   }
 
+  pub fn epoch(&mut self) -> String {
+    self.advance(6)
+  }
+
+  pub fn timestamp(&mut self) -> String {
+    self.advance(16)
+  }
+
   pub fn new(s: &String) -> Self {
     Cursor { msg: s.to_owned(), now: 0 }
   }
@@ -46,5 +54,7 @@ impl Cursor {
 
     res
   }
+
+
 
 }

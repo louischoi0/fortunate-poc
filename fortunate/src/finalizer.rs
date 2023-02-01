@@ -1,7 +1,7 @@
 use aws_sdk_dynamodb::{ Client, model::AttributeValue, };
 use sha2::digest::block_buffer::Block;
 use crate::block::BlockBuffer;
-use crate::dynamoc;
+use crate::dynamoc::{self, SelectQuerySetResult};
 use crate::dynamoc::DynamoSelectQueryContext;
 use crate::event::{EventBuffer, Event};
 use crate::node;
@@ -25,7 +25,7 @@ pub trait BlockFinalizable<T> {
     records: &Vec<HashMap<String, DataType>>,
   ) -> String;
 
-  async fn build_block(
+  fn build_block(
     &self,
     epoch: &std::string::String,
     prev_blockhash: &std::string::String,
@@ -33,12 +33,70 @@ pub trait BlockFinalizable<T> {
     finalized_at: &std::string::String,
   ) -> crate::block::BlockBuffer;
 
-  async fn get_block(
-    &self,
-    epoch: &std::string::String,
-  ) -> HashMap<String, DataType>;
+  async fn get_block(&self, epoch: &std::string::String) -> HashMap<String, DataType>;
 
 }
+
+#[async_trait]
+pub trait BlockVerifiable<T> {
+  fn verify_block(
+    &self,
+    hm_block: &HashMap<String, DataType>,
+    events: &Vec<HashMap<String, DataType>>,
+  ) -> bool;
+
+  async fn _get(&self, blockhash: &std::string::String);
+}
+
+
+#[async_trait]
+impl <Event> BlockVerifiable<Event> for FortunateEventFinalizer {
+
+  async fn _get(
+    &self,
+    blockhash: &std::string::String
+  ) {
+    let mut cursor = crate::cursor::Cursor::new(blockhash);
+
+    let epoch = cursor.epoch();
+    let ts = cursor.timestamp();
+    let block_hash = cursor.advance(92);
+
+    println!("{} {} {}", epoch, ts, block_hash);
+  }
+
+  fn verify_block(
+    &self,
+    hm_block: &HashMap<String, DataType>,
+    events: &Vec<HashMap<String, DataType>>,
+  ) -> bool {
+    let s: &dyn BlockFinalizable<Event> = self;
+
+    let epoch = dunwrap_s(
+      hm_block.get("epoch").unwrap()
+    );
+
+    let ts = dunwrap_s(
+      hm_block.get("ts").unwrap()
+    );
+
+    let prev_blockhash = dunwrap_s(
+      hm_block.get("prev_blockhash").unwrap()
+    );
+
+    let _block 
+      = s.build_block(&epoch, &prev_blockhash, &events, &ts);
+    let computed = self.hash_eventblock(&_block);
+
+    let origin = crate::block::BlockHash { 
+      hash: dunwrap_s(hm_block.get("hash").unwrap())
+    };
+
+    computed == origin
+  }
+}
+
+const BlockFinalizableEventLogger: crate::flog::FortunateLogger  = crate::flog::FortunateLogger::new("blockfinalizer<event>");
 
 #[async_trait]
 impl <Event> BlockFinalizable<Event> for FortunateEventFinalizer {
@@ -50,15 +108,23 @@ impl <Event> BlockFinalizable<Event> for FortunateEventFinalizer {
     let mut ret = String::from("");
 
     for e in events.iter() {
-      ret += dunwrap_s(
+      let s = dunwrap_s(
         e.get("buffer").unwrap()
-      ).as_str()
+      );
+
+      BlockFinalizableEventLogger.info(
+        format!(
+        "reduce records; event buffer={};", s
+        ).as_str()
+      );
+      
+      ret += &s;
     };
 
     ret
   }
 
-  async fn build_block(
+  fn build_block(
     &self,
     epoch: &std::string::String,
     prev_blockhash: &std::string::String,
@@ -70,9 +136,7 @@ impl <Event> BlockFinalizable<Event> for FortunateEventFinalizer {
 
     let event_block_buffer = s.reduce_records(records);
 
-    crate::block::BlockBuffer {
-      buffer: buffer + prev_blockhash + finalized_at
-    }
+    crate::block::BlockBuffer { buffer: buffer + prev_blockhash + finalized_at + &event_block_buffer }
   }
 
   async fn get_block(
@@ -122,8 +186,6 @@ impl FortunateEventFinalizer {
       region: region.to_owned()
     }
   }
-
-
 
   pub async fn get_events(
     &self, 
@@ -210,7 +272,7 @@ impl FortunateEventFinalizer {
     let s: &dyn BlockFinalizable<Event> = self;
 
     let blockbuffer
-      = s.build_block(epoch, &_prev_block_hash,&events, &finalized_at).await;
+      = s.build_block(epoch, &_prev_block_hash,&events, &finalized_at);
 
     self.commit_block(
       &epoch, 
@@ -289,7 +351,7 @@ impl FortunateNodeSignalFinalizer {
       cimpl: crate::sessions::RedisImpl::new(Some(_uuid.to_owned())),
 
       region: region.to_owned(),
-      logger: crate::flog::FortunateLogger::new(String::from("nodesignalfinalizer")),
+      logger: crate::flog::FortunateLogger::new("nodesignalfinalizer"),
     };
 
     crate::matrix::ObjectLock::init_object_lock(&mut fnz.cimpl, &fnz.uuid);

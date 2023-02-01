@@ -37,7 +37,7 @@ impl RedisImpl {
       redis_connection: con,
       prefix_key: prefix_key,
 
-      logger: FortunateLogger::new(String::from("redisImpl")),
+      logger: FortunateLogger::new("redisimpl"),
     }
   }
 
