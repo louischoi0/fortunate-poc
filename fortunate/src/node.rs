@@ -11,7 +11,8 @@ use crate::matrix::ObjectSession;
 use crate::tsgen;
 use crate::tsgen::TsEpochPair;
 use crate::flog::FortunateLogger;
-use crate::cursor::{ Cursor };
+use crate::cursor::{ Cursor, TCursor };
+use async_trait::async_trait;
 
 use aws_sdk_dynamodb::{ Client, };
 use aws_sdk_dynamodb::{
@@ -74,25 +75,6 @@ pub struct NodeSignalKey {
   pub ts: tsgen::Timestamp,
 }
 
-  /**
-impl NodeSignalKey {
-  pub fn and(&self, other: &NodeSignalKey, flagidx: usize) -> bool {
-    let a = String::from(self.flags.chars().nth(flagidx).unwrap()).parse::<u8>().unwrap();
-    let b = String::from(other.flags.chars().nth(flagidx).unwrap()).parse::<u8>().unwrap();
-
-    return !((a*b) == 0)
-  }
-
-  pub fn at(&self, flagidx: usize) -> bool {
-    !(String::from(self.flags.chars().nth(flagidx).unwrap()).parse::<u8>().unwrap() == 0)
-  }
-}
-  */
-
-trait INodeSignal {
-  fn signalkey(&self) -> String;
-}
-
 enum SignalType {
   BITARR(NodeSignalBitArr),
   NUMERIC(),
@@ -151,7 +133,6 @@ impl NodeSignalBase {
   }
 }
 
-
 pub struct FNode {
   pub uuid: String,
   pub host: String,
@@ -179,13 +160,17 @@ pub struct FNode {
   logger: FortunateLogger,
 }
 
+#[async_trait]
+pub trait TNode<S> {
+  async fn update(&mut self);
+  fn make_signal(&self) -> NodeSignalBase;
+
+}
 
 impl FNode{
   /**
   pub async fn get_node_signals(client: &Client, epoch: &std::string::String) -> Vec<NodeSignalKey> {
-
   } */
-
 
   pub async fn get_node_s_signals(client: &Client, epoch: &String) -> Vec<HashMap<String, DataType>> {
     let _nodesignal_dimpl = dynamoc::DynamoHandler::nodesignal();
@@ -214,9 +199,7 @@ impl FNode{
   }
 
   pub async fn new(uuid: &std::string::String, region: &std::string::String) -> Self {
-
     //TODO make function mapping to region based on statics
-
     return FNode {
       uuid: uuid.to_owned(),
       host: String::from("localhost"),
@@ -401,7 +384,6 @@ impl FNode{
 
 
 }
-
 
 
 

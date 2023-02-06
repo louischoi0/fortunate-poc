@@ -13,7 +13,7 @@ use crate::primitives::dunwrap_s;
 use crate::sessions::RedisImpl;
 use crate::tsgen;
 use crate::node;
-use crate::cursor::{ Cursor };
+use crate::cursor::{ Cursor, TCursor };
 use log::{debug, error, info, trace, warn};
 use async_trait::async_trait;
 
@@ -241,7 +241,7 @@ impl PEventGenerator {
       dynamo_client: crate::dynamoc::get_dynamo_client().await,
       cimpl: crate::sessions::RedisImpl::new(Some("peventgenerator".to_string())),
       logger: FortunateLogger::new(
-        "PEventGenerator"
+        "peventgenerator"
       ),
       region: region.to_owned()
     }

@@ -17,6 +17,8 @@ use sha2::{Sha256, Sha512, Digest};
 use log::{error, info, debug};
 use async_trait::async_trait;
 
+use crate::cursor::{ TCursor, Cursor};
+
 #[async_trait]
 pub trait BlockFinalizable<T> {
 

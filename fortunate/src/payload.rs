@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::cursor::{ TCursor, Cursor};
 
 pub struct Payload {
   pub data: Option<HashMap<String, String>>,
