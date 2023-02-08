@@ -1,10 +1,13 @@
 use std::collections::HashMap;
+use tokio::time::{sleep, Duration};
 
 use aws_sdk_dynamodb::{ Client, };
 use async_trait::async_trait;
 use sha2::digest::typenum::Bit;
 
 use crate::cursor::Cursor;
+use crate::flog::FortunateLogger;
+use crate::matrix::ObjectSession;
 use crate::sessions::RedisImpl;
 use crate::{dynamoc, tsgen};
 use crate::primitives::DataType;
@@ -64,131 +67,155 @@ impl BitArraySignalKey {
 #[async_trait]
 pub trait INode { 
   fn _interval(&mut self); 
-  async fn emit(&mut self, cimpl: &mut RedisImpl);
+  async fn emit(&mut self) -> HashMap<String, String>;
   fn signalbuffer(&mut self) -> String;
-}
 
-pub struct INodeImpl_X01<W: TBitWindow, V: Clone + Copy> {
-  dynamo_client: Client,
-  w: W,
-  s: V,
-}
+  async fn process(&mut self) {
+    let loop_interval = 1000;
+    let emit_inteval = 15;
+    let mut frame_cnt: u64 = 0;
 
-impl INodeImpl_X01<BitWindow, u16> {
-  pub async fn new() -> Self {
-    let wi = WindowInitializer::<BitWindow>::new();
-    INodeImpl_X01 {
-      dynamo_client: dynamoc::get_dynamo_client().await,
-      w: wi.create(100, 2),
-      s: 0,
+    loop {
+
+      if (frame_cnt % emit_inteval == 0) {
+        self._interval();
+        self.emit().await;
+      }
+
+      frame_cnt += 1;
+      sleep(Duration::from_millis(loop_interval)).await;
     }
   }
-
 }
 
-#[async_trait]
-impl INode for INodeImpl_X01<BitWindow, u16> { 
-  fn _interval(&mut self) {
-    WindowInitializer::<BitWindow>::shuffle_bw__fisher_yates(&mut self.w);
-  }
-
-  async fn emit(&mut self, cimpl: &mut RedisImpl) {
-    let crate::tsgen::TsEpochPair {ts, epoch} = crate::tsgen::get_ts_pair();
-
-  }
-
-  fn signalbuffer(&mut self) -> String {
-    String::from("")    
-  }
-
-}
+pub trait INodeSession { }
 
 pub struct INodeImpl_S01<W: TBitWindow, V: Clone + Copy> {
   dynamo_client: Client,
   s: V, //phantom value
-  cursor: DimensionWindowCursor<W>,
+  cursor2: DimensionWindowCursor<W>,
+  cursor10: DimensionWindowCursor<W>,
 
   uuid: std::string::String,
   region: std::string::String,
+
+  session: ObjectSession,
+  logger: FortunateLogger,
 }
 
 impl INodeImpl_S01<BitWindow, u16> {
 
-  async fn new() -> Self {
+  pub async fn new(uuid: &std::string::String) -> Self {
     let mut v = vec![];
+    let mut v2 = vec![];
+
     let wi = WindowInitializer::<BitWindow>::new();
 
-    // InodeImpl_S01 have 10 windows
+    // InodeImpl_S01 have 10 windows for 2^x
     for i in (1..11) {
       v.push(
-        wi.create(1024, 2^i)
+        wi.create(1024, i32::pow(2,i).try_into().unwrap())
+      );
+    };
+
+    // InodeImpl_S01 have 3 windows for 10^x
+    for i in (1..4) {
+      v2.push(
+        wi.create(1000, i32::pow(10,i).try_into().unwrap())
       );
     };
 
     INodeImpl_S01 { 
       dynamo_client: dynamoc::get_dynamo_client().await, 
       s: 0,
-      cursor: DimensionWindowCursor::new(v),
+      cursor2: DimensionWindowCursor::new(v),
+      cursor10: DimensionWindowCursor::new(v2),
 
-      uuid: std::string::String::from(""),
+      uuid: uuid.to_owned(),
       region: std::string::String::from(""),
+
+      session: ObjectSession::new(
+        uuid.to_owned(),
+        std::string::String::from("nodes01"),
+      ),
+
+      logger: FortunateLogger::new("InodeImpl_S01")
     }
   }
+}
 
+fn get_node_signal_hm(
+  epoch: &String,
+  signalbuffer: &String,
+  ts: &String,
+  region: &String 
+) -> HashMap<String, String> {
+  let mut data = HashMap::<String, String>::new();
+
+  data.insert(
+    String::from("epoch"), epoch.to_owned()
+  );
+
+  data.insert(
+    String::from("signal_key"), signalbuffer.to_owned()
+  );
+
+  data.insert(
+    String::from("timestamp"), ts.to_owned()
+  );
+
+  data.insert(
+    String::from("epoch"), epoch.to_owned()
+  );
+
+  data
 }
 
 #[async_trait]
 impl INode for INodeImpl_S01<BitWindow, u16> {
+
   fn _interval(&mut self) {
-    for _w in self.cursor.wdw_ref.iter_mut() {
+    for _w in self.cursor2.wdw_ref.iter_mut() {
+      WindowInitializer::<BitWindow>::shuffle_bw__fisher_yates(_w);
+    }
+
+    for _w in self.cursor10.wdw_ref.iter_mut() {
       WindowInitializer::<BitWindow>::shuffle_bw__fisher_yates(_w);
     }
   }
 
-  async fn emit(&mut self, cimpl: &mut RedisImpl) {
+  async fn emit(&mut self) -> HashMap<String, String> {
     let signalbuffer = self.signalbuffer();
-
     let mut c = Cursor::new(&signalbuffer);
+
     let epoch = c.epoch();
+    let ts = c.timestamp();
+    let region = std::string::String::from("");
 
-    crate::matrix::ObjectLock::acquire(
-      cimpl,
-      &self.region,
-      &self.uuid,
-      0
-    ).await;
-    
-    let epoch2 = tsgen::get_epoch();
+    let data = get_node_signal_hm(&epoch, &signalbuffer, &ts, &region);
 
-    if(epoch != epoch2) {
-      return;
-    }
+    let hdr = dynamoc::DynamoHandler::node();
+    let request = hdr.make_insert_request(&self.dynamo_client, data.to_owned());
 
+    hdr.commit(request).await;
+
+    self.logger.p(
+      format!("send signal: {:?};", data).as_str()
+    );
+
+    self.session.timestamp();
+
+    data
   }
 
   fn signalbuffer(&mut self) -> String {
     let crate::tsgen::TsEpochPair {ts, epoch} = crate::tsgen::get_ts_pair();
-    let s = self.cursor.advance();
-    epoch + &ts + &s
+
+    let s = self.cursor2.advance();
+    let s2 = self.cursor10.advance();
+    epoch + &ts + &s + &s2
   }
 
   
 }
-
-
-pub struct Node<I: INode> {
-  /*
-  W: window Type 
-  I: Node Interface,
-  V: value (u16, u32, u64)
-  */
-  pub uuid: String,
-  pub host: String, 
-
-  pub seed: String,
-
-  pub mtx_session: crate::matrix::ObjectSession,
-  node_impl: I,
-}
-
 

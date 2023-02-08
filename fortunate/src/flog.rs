@@ -38,4 +38,8 @@ impl FortunateLogger {
     warn!("{}:{}", self.program_name, msg);
   }
 
+  pub fn p(&self, msg: &str) {
+    println!("{}", msg)
+  }
+
 }

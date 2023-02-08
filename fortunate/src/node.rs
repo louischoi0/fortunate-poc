@@ -172,32 +172,6 @@ impl FNode{
   pub async fn get_node_signals(client: &Client, epoch: &std::string::String) -> Vec<NodeSignalKey> {
   } */
 
-  pub async fn get_node_s_signals(client: &Client, epoch: &String) -> Vec<HashMap<String, DataType>> {
-    let _nodesignal_dimpl = dynamoc::DynamoHandler::nodesignal();
-
-    let qctx = crate::dynamoc::DynamoSelectQueryContext {
-      table_name: &"node_signals",
-      conditions: Some(vec![
-        crate::primitives::Pair::<&'static str, crate::primitives::DataType> {
-            k: "epoch",
-            v: crate::primitives::DataType::S(epoch.to_owned()),
-        },
-      ]),
-      query_subtype: dynamoc::DynamoSelectQuerySubType::All
-    };
-
-    let items = 
-        _nodesignal_dimpl.q(
-        &client, 
-        &qctx
-      ).await.unwrap();
-
-    match items {
-      dynamoc::SelectQuerySetResult::All(x) => x.unwrap(),
-      _ => panic!("invalid select operation type.")
-    }
-  }
-
   pub async fn new(uuid: &std::string::String, region: &std::string::String) -> Self {
     //TODO make function mapping to region based on statics
     return FNode {
@@ -335,20 +309,6 @@ impl FNode{
 
   pub async fn update_session(&mut self) { }
 
-  pub fn execute_flag(&mut self) -> bool {
-    let flag = self.session.get_flag();
-
-    if ( (&flag).eq("TERMINATED") ) {
-      self.terminate_node();
-      true
-    }
-
-    else {
-      false 
-    }
-
-  }
-
   pub async fn process(&mut self) {
     let loop_interval = 1000;
     let update_inteval = 15;
@@ -359,7 +319,7 @@ impl FNode{
 
     loop {
       self.update_session();
-      if ( self.execute_flag() ) {
+      if ( true ) {
         self.logger.info("node has been shutdown.");
         break;
       }
@@ -384,6 +344,7 @@ impl FNode{
 
 
 }
+
 
 
 

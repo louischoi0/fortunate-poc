@@ -20,6 +20,7 @@ mod primitives;
 mod client;
 mod matrix;
 mod window;
+mod actionplanner;
 
 use log::{debug, error, info, trace, warn};
 

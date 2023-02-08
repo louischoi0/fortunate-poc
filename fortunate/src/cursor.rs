@@ -26,6 +26,9 @@ impl TCursor<String> for Cursor {
 }
 
 impl Cursor {
+  pub fn eof(&self) -> bool {
+    self.now > (self.msg.len() - 1)
+  }
 
   pub fn epoch(&mut self) -> String {
     self.advance(6)
@@ -65,7 +68,24 @@ impl Cursor {
     res
   }
 
+  pub fn advance_until_changed(&mut self) -> String {
+    let start = self.now;
 
+    let mut s: &str = &self.msg.as_str()[start..start+1];
+    let mut _s = s.clone();
+
+    while (self.now < self.msg.len()) {
+      _s = &self.msg.as_str()[self.now..self.now+1];
+
+      if (s != _s) { 
+        break;
+      }
+
+      self.now += 1;
+    };
+
+    self.msg[start..self.now].to_string()
+  }
 
 }
 

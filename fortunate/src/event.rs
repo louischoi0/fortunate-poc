@@ -250,7 +250,7 @@ impl PEventGenerator {
   pub async fn get_node_signalkeys(&self, epoch: &String) -> 
     Result<std::vec::Vec<node::NodeSignalKey>, ()> {
     let signals = 
-      node::FNode::get_node_s_signals(&self.dynamo_client, epoch).await;
+      crate::fnode::get_node_s_signals(&self.dynamo_client, epoch).await;
 
     let _signals: Vec<node::NodeSignalKey> = signals.iter()
       .map(|x| dunwrap_s(x.get("data").unwrap()) )

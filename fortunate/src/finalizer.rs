@@ -442,7 +442,7 @@ impl FortunateNodeSignalFinalizer {
     let mut ret = String::from("");
 
     for sig in signals.iter() {
-      let data = sig.get("data").unwrap();
+      let data = sig.get("signal_key").unwrap();
       ret += dunwrap_s(data).as_str();
     }
 

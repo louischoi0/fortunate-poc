@@ -22,11 +22,6 @@ pub struct RedisImpl {
 
 const REDIS_HOST: &'static str = "redis://127.0.0.1/";
 
-trait RedisQueriable {
-
-}
-
-
 impl RedisImpl {
   pub fn new(prefix_key: Option<String>) -> Self {
     let client = redis::Client::open(REDIS_HOST).unwrap();
@@ -69,4 +64,9 @@ impl RedisImpl {
 
     self.redis_connection.set::<'a, String, V, T>(_key, value).unwrap();
   }
+}
+
+
+struct SessionCacheImpl {
+
 }

@@ -15,3 +15,4 @@ pub mod client;
 pub mod matrix;
 pub mod window;
 pub mod fnode;
+pub mod actionplanner;

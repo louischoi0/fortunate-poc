@@ -365,15 +365,6 @@ pub struct ObjectSession {
 
   // object_lock: ObjectLock, TODO
 
-  /**
-   * 0 no flag 
-   * 1 
-   * 2 
-   * 4 terminate flag
-   */
-  pub flag: String,
-  pub status: String,
-
   pub updated_at: u64,
   pub created_at: u64,
 
@@ -382,15 +373,18 @@ pub struct ObjectSession {
 
 impl ObjectSession {
   pub fn new(uuid: String, object_type: String) -> Self {
-    ObjectSession { 
+    let mut inst = ObjectSession { 
       uuid: uuid.to_owned(), 
-      object_type: object_type, 
-      cimpl: crate::sessions::RedisImpl::new(Some(uuid)), 
-      flag: std::string::String::from(""), 
-      status: std::string::String::from(""),
+      object_type: object_type.to_owned(), 
+      cimpl: crate::sessions::RedisImpl::new(Some(
+        format!("{}:{}", object_type, uuid)
+      )), 
       updated_at: 0, 
       created_at: tsgen::get_ts().parse::<u64>().unwrap() 
-    }
+    };
+
+    inst.cimpl.set::<String, String>(std::string::String::from("crated_at"), tsgen::get_ts());
+    inst
   }
 
   pub fn set_status(&mut self, s: &String) {
@@ -401,17 +395,10 @@ impl ObjectSession {
     self.timestamp()
   }
 
-  pub fn get_flag(&mut self) -> std::string::String {
-    self.cimpl.get::<String>(
-      std::string::String::from("flag")
-    )
-  }
-
   pub fn timestamp(&mut self) {
-    return;
-    self.cimpl.set::<u64, u64> (
-      std::string::String::from("created_at"), 
-      tsgen::get_ts().parse::<u64>().unwrap()
+    self.cimpl.set::<String, String> (
+      std::string::String::from("updated_at"), 
+      tsgen::get_ts()
     )
   }
 
@@ -433,6 +420,4 @@ impl ObjectSession {
 
   }
 
-  pub fn read_flag(&self) {
-  }
 }
