@@ -7,8 +7,11 @@ use tokio::time::{sleep, Duration};
 use crate::finalizer::{FortunateEventFinalizer, BlockVerifiable, BlockFinalizable};
 use crate::primitives::dunwrap_s;
 use crate::{payload, hashlib};
-use crate::{node::FNode, sessions::RedisImpl};
+use crate::fnode::{INodeImpl_S01, INode};
+use crate::sessions::RedisImpl;
 use crate::{finalizer::FortunateNodeSignalFinalizer};
+use crate::eventgenerator::EventGenerator;
+use crate::actionplanner::{ActionPlanner, ExpMap, IActionPlan, BitArrayActionPlan};
 
 
 pub fn cli() -> Command {
@@ -60,9 +63,12 @@ pub fn cli() -> Command {
       
 }
 
-pub async fn generate_event_periodically(pe: &mut crate::event::PEventGenerator) -> () {
+pub async fn generate_event_periodically(pe: &mut EventGenerator) -> () {
   let loop_interval = 5000;
   let commiter = crate::event::EventCmtr::new().await;
+
+  let mut ap = ActionPlanner::new().await;
+  let em = ExpMap { e2: 4, e10: 3 };
 
   while (true) {
     let mut payload = HashMap::<String,String>::new();
@@ -82,8 +88,9 @@ pub async fn generate_event_periodically(pe: &mut crate::event::PEventGenerator)
       crate::matrix::Matrix::get_prev_epoch(&pe.region, &mut pe.cimpl, &pe.uuid).await;
     
     let p = payload.buffer.unwrap().to_owned();
+    let plan = ap.get_actionplan_for_event_pe::<bool>(&epoch, &em).await;
 
-    let res = pe.generate_event_pe2(&p).await.unwrap();
+    let res = pe.generate_event_from_plan(plan, &"".to_string()).await; //TODO
     println!("peventgenerator: {}:{}, {:?}", epoch, p, res);
 
     commiter.commit_event(&res).await;
@@ -106,8 +113,8 @@ pub fn query_client_status(region: &std::string::String) {
   match nodes {
     Ok(x) => {
       for it in x.iter() {
-        let session = FNode::get_node_session(&mut imp, it);
-        println!("{:?}", session);
+        //let session = FNode::get_node_session(&mut imp, it);
+        //println!("{:?}", session);
       }
     }
     Err(e) => {
@@ -127,7 +134,7 @@ pub async fn client_main() {
         let nodeid = format!("node:{}", nodeid);
 
         let region = std::string::String::from("matrix:northeast-1"); 
-        let mut nd = FNode::new(&nodeid, &region).await;
+        let mut nd = INodeImpl_S01::new(&region).await;
         nd.process().await;
        },
 
@@ -153,19 +160,21 @@ pub async fn client_main() {
       Some(("start", sub_matches)) => {
         println!("start fortunate matrix");
         let mut matrix = crate::matrix::Matrix::new(
-          &std::string::String::from("matrix:northeast-1")
+          &std::string::String::from("northeast-1")
         ).await;
 
         matrix.process().await;
        },
 
       Some(("pubevent", sub_matches)) => {
-
+        let region = "northeast-1".to_string();
         let mut pev = crate::event::PEventGenerator::new(
           &std::string::String::from("matrix:northeast-1")
         ).await;
 
-        generate_event_periodically(&mut pev).await;
+        let mut pe = EventGenerator::new(&region);
+
+        generate_event_periodically(&mut pe).await;
 
       },
 

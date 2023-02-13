@@ -8,6 +8,9 @@ use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSig
 use crate::flog::FortunateLogger;
 use async_trait::async_trait;
 
+const MatrixLogger: crate::flog::FortunateLogger  = crate::flog::FortunateLogger::new("matrix");
+
+
 pub struct Matrix {
   /**
    * managing server session and status, nodes, block 
@@ -25,7 +28,7 @@ pub struct Matrix {
   nodsignal_finalizer: FortunateNodeSignalFinalizer,
   event_finalizer: FortunateEventFinalizer,
 
-  logger: FortunateLogger,
+  logger: &'static FortunateLogger,
   
   pub cimpl: crate::sessions::RedisImpl,
   pub created_at: crate::tsgen::Timestamp,
@@ -50,9 +53,11 @@ impl Matrix {
     requester: &std::string::String,
   ) -> std::string::String {
 
-    ObjectLock::acquire(
-      cimpl, region, requester, 0
-    ).await;
+    MatrixLogger.info(
+      format!("op:get_prev_epoch; matrix:{};", region).as_str()
+    );
+
+    ObjectLock::acquire(cimpl, "matrix", region, requester, 0).await;
 
     cimpl.redis_connection.get::<String,String>(
       format!("{}:prev_epoch", region)
@@ -66,7 +71,9 @@ impl Matrix {
   ) -> std::string::String {
 
     ObjectLock::acquire(
-      cimpl, region, requester, 0
+      cimpl, 
+      "matrix",
+      region, requester, 0
     ).await;
 
     cimpl.redis_connection.get::<String,String>(
@@ -95,12 +102,12 @@ impl Matrix {
         uuid
       ).await,
 
-      logger: FortunateLogger::new("node"),
-      cimpl: crate::sessions::RedisImpl::new(Some(uuid.to_owned())),
+      logger: &MatrixLogger,
+      cimpl: crate::sessions::RedisImpl::new(Some(format!("matrix:{}",uuid.to_owned()))),
       created_at: tsgen::get_ts_c(),
     };
 
-    ObjectLock::init_object_lock(&mut matrix.cimpl, uuid);
+    ObjectLock::init_object_lock(&mut matrix.cimpl, "matrix", uuid);
 
     matrix
   }
@@ -111,13 +118,17 @@ impl Matrix {
 
   async fn start_finalizing(&mut self) {
     ObjectLock::acquire(
-      &mut self.cimpl, &self.uuid, &self.uuid, 1
+      &mut self.cimpl, 
+      "matrix",
+      &self.uuid, 
+      &self.uuid, 
+      1
     );
   }
 
   async fn end_finalizing(&mut self) {
     ObjectLock::release(
-      &mut self.cimpl, &self.uuid
+      &mut self.cimpl, "matrix", &self.uuid
     );
   }
 
@@ -257,18 +268,27 @@ pub struct ObjectLock { }
 impl ObjectLock { 
 
   fn parse_key(
+    object_type: &str,
     object_uuid: &std::string::String,
     lock_type: &'static str,
   ) -> std::string::String {
-    format!("{}:{}", object_uuid, lock_type)
+    format!("{}:{}:{}", object_type, object_uuid, lock_type)
   }
 
   fn get(
     cimpl: &mut RedisImpl,
+    object_type: &str,
     object_uuid: &std::string::String,
     lock_type: &'static str,
   ) -> std::string::String {
-    let key = ObjectLock::parse_key(object_uuid, lock_type);
+
+    let key = ObjectLock::parse_key(object_type, object_uuid, lock_type);
+
+    ObjectLockLogger.info(
+      format!("getop; key:{:?};", key.to_owned())
+            .as_str()
+    );
+
     cimpl.redis_connection.get::<String, String>(
       key,
     ).expect("")
@@ -276,11 +296,12 @@ impl ObjectLock {
 
   fn set(
     cimpl: &mut RedisImpl,
+    object_type: &str,
     object_uuid: &std::string::String,
     lock_type: &'static str,
     v: &std::string::String,
   ) -> () {
-    let key = ObjectLock::parse_key(object_uuid, lock_type);
+    let key = ObjectLock::parse_key(object_type, object_uuid, lock_type);
     cimpl.redis_connection.set::<String, String, String> (
       key, v.to_owned()
     );
@@ -288,30 +309,32 @@ impl ObjectLock {
 
   pub fn init_object_lock(
     cimpl: &mut RedisImpl,
+    object_type: &str,
     object_uuid: &std::string::String,
   ) -> () {
     ObjectLock::set(
-      cimpl, object_uuid, "object_lock", 
+      cimpl, object_type, object_uuid, "object_lock", 
       &std::string::String::from("0")
     );
 
     ObjectLock::set(
-      cimpl, object_uuid, "created_at", 
+      cimpl, object_type, object_uuid, "created_at", 
       &tsgen::get_ts(),
     );
   }
 
   pub async fn release(
     cimpl: &mut RedisImpl,
+    object_type: &str,
     object_uuid: &std::string::String,
   ) -> () {
     ObjectLock::set(
-      cimpl, object_uuid, "object_lock", 
+      cimpl, object_type, object_uuid, "object_lock", 
       &std::string::String::from("0")
     );
 
     ObjectLock::set(
-      cimpl, object_uuid, "last_released_at", 
+      cimpl, object_type, object_uuid, "last_released_at", 
       &tsgen::get_ts()
     );
 
@@ -319,22 +342,23 @@ impl ObjectLock {
 
   pub async fn acquire(
     cimpl: &mut RedisImpl,
+    object_type: &str,
     object_uuid: &std::string::String,
     requester: &std::string::String,
     mode: u8
   ) -> bool {
     let interval = 10;
     ObjectLockLogger.info(
-      format!("Acquire for {} from {}; mod:{:?}", object_uuid, requester, mode)
+      format!("Acquire for {} from {}; object_type:{:?}; mod:{:?};", object_type, object_uuid, requester, mode)
             .as_str()
     );
 
     loop {
-      let lock = ObjectLock::get(cimpl, object_uuid, "object_lock");
+      let lock = ObjectLock::get(cimpl, object_type, object_uuid, "object_lock");
 
       if (lock == "0") {
-        ObjectLock::set(cimpl, object_uuid, "holder", requester);
-        ObjectLock::set(cimpl, object_uuid, "last_acquired_at", &tsgen::get_ts());
+        ObjectLock::set(cimpl, object_type, object_uuid, "holder", requester);
+        ObjectLock::set(cimpl, object_type, object_uuid, "last_acquired_at", &tsgen::get_ts());
 
         /**
          * 0 shared lock
@@ -342,7 +366,7 @@ impl ObjectLock {
          */
         if (mode == 1) {
           ObjectLock::set(
-            cimpl, object_uuid, "object_lock", &std::string::String::from("1"), 
+            cimpl, object_type, object_uuid, "object_lock", &std::string::String::from("1"), 
           );
         }
 
@@ -373,6 +397,11 @@ pub struct ObjectSession {
 
 impl ObjectSession {
   pub fn new(uuid: String, object_type: String) -> Self {
+
+    ObjectLockLogger.info(
+      format!("op:init_session; uuid:{};", uuid).as_str()
+    );
+
     let mut inst = ObjectSession { 
       uuid: uuid.to_owned(), 
       object_type: object_type.to_owned(), 

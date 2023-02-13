@@ -1,4 +1,4 @@
-use crate::window::{BitWindow, TBitWindow};
+use crate::{window::{BitWindow, TBitWindow}, fnode::BitArraySignalKey};
 
 #[derive(Debug)]
 pub struct Cursor {
@@ -161,6 +161,41 @@ impl DCursor<String> for DimensionWindowCursor<BitWindow> {
     vec_to_str_vu16(
       &self.iter_2d()
     )
+  }
+
+}
+
+
+
+pub struct BitArraySignalKeyCursor {
+  pub key: String,
+  pub now: u16,
+}
+
+impl BitArraySignalKeyCursor {
+
+  pub fn new(k: &std::string::String) -> Self {
+    BitArraySignalKeyCursor {
+      key: k.to_owned(),
+      now: 0
+    }
+  }
+
+  pub fn bitarr(&self) -> String {
+    // 6: epoch length; 16: timestamp length;
+    self.key.as_str()[6+16..].to_string()
+  }
+
+  pub fn bit(&self, idx: usize) -> bool {
+    let idx = 6+16+idx;
+    let bit = self.key.chars().nth(idx).unwrap();
+
+    if (bit == '0') {
+      false
+    }
+    else {
+      true
+    }
   }
 
 }

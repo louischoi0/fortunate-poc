@@ -21,6 +21,8 @@ mod client;
 mod matrix;
 mod window;
 mod actionplanner;
+mod eventgenerator;
+mod macros;
 
 use log::{debug, error, info, trace, warn};
 

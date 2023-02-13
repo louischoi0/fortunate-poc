@@ -1,15 +1,17 @@
 use rand::Rng;
 
+use crate::primitives;
+
 pub fn get_randnum_r(min: u32, max: u32) -> u32 {
   let mut rng = rand::thread_rng();
   (rng.gen::<u32>() & max) + min
 }
 
 
-
 pub fn shuffle__fisher_yates<T: Clone + Copy>(arr: &Vec<T>) -> Vec<T> {
   let mut result: Vec<T> = vec![];
   let mut _arr = arr.clone();
+
 
   while( _arr.len() > 0 ) {
     let idx = usize::try_from(

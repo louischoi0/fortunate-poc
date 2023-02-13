@@ -342,7 +342,8 @@ impl FortunateNodeSignalFinalizer {
   pub async fn new(
     region: &std::string::String,
   ) -> Self {
-    let _uuid = format!("nodesignalfinalizer:{}", region);
+    let _uuid = crate::hashlib::uuid(6);
+    let object_type = "northeast-1:object_lock";
     
     let mut fnz = FortunateNodeSignalFinalizer {
       uuid: _uuid.to_owned(),
@@ -353,10 +354,10 @@ impl FortunateNodeSignalFinalizer {
       cimpl: crate::sessions::RedisImpl::new(Some(_uuid.to_owned())),
 
       region: region.to_owned(),
-      logger: crate::flog::FortunateLogger::new("nodesignalfinalizer"),
+      logger: crate::flog::FortunateLogger::new(object_type),
     };
 
-    crate::matrix::ObjectLock::init_object_lock(&mut fnz.cimpl, &fnz.uuid);
+    crate::matrix::ObjectLock::init_object_lock(&mut fnz.cimpl, object_type, &fnz.uuid);
 
     fnz
   }

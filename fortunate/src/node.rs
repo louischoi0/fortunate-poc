@@ -20,6 +20,8 @@ use aws_sdk_dynamodb::{
 };
 
 
+const NodeLogger: FortunateLogger = FortunateLogger::new("node");
+
 #[derive(Debug)]
 enum FNodeStatus {
   RUNNING,
@@ -73,6 +75,43 @@ pub struct NodeSignalKey {
   pub signal_key: std::string::String,
   pub epoch: std::string::String,
   pub ts: tsgen::Timestamp,
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeSignalKeyRefSer {
+  pub signal_key: std::string::String,
+
+}
+
+impl NodeSignalKeyRefSer {
+  pub fn new(
+    signal_key: &std::string::String,
+    ref_index: usize,
+  ) -> Self {
+    let mut c = Cursor::new(signal_key);
+
+    let epoch = c.epoch();
+    let ts = c.timestamp();
+
+    let uuid = c.advance(6);
+
+    let s_ref_index = format!("{:03}", ref_index);
+    let flags = c.rest();
+
+    NodeSignalKeyRefSer {
+      signal_key: std::string::String::from(
+        format!("{}{}{}{}{}", epoch, ts, uuid, s_ref_index, flags)
+      )
+    }
+  }
+
+  pub fn refindex(&self) -> u8 {
+    self.signal_key[6+16+6..6+16+6+3]
+        .to_string()
+        .parse::<u8>()
+        .unwrap()
+  }
+
 }
 
 enum SignalType {
@@ -243,6 +282,7 @@ impl FNode{
 
     crate::matrix::ObjectLock::acquire(
       &mut self.session.cimpl,
+      "node",
       &self.region,
       &self.uuid,
       0

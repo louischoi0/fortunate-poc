@@ -3,6 +3,7 @@ use std::fmt::Error;
 use std::ops::Deref;
 use rand::Rng;
 
+use crate::actionplanner::IActionPlan;
 use crate::cursor;
 use crate::dynamoc;
 use crate::flog::FortunateLogger;
@@ -208,6 +209,7 @@ pub struct PEventGenerator {
 
 #[async_trait]
 impl matrix::MatrixComponent for PEventGenerator {
+  /** PEventGenerator will be deprecated and replaced by EventGenerator: eventgenerator.rs */
 
   async fn matrix_lock_acquire(
       &mut self,
@@ -220,6 +222,7 @@ impl matrix::MatrixComponent for PEventGenerator {
 
     crate::matrix::ObjectLock::acquire(
       &mut self.cimpl,
+      "matrix",
       &self.region,
       &self.uuid,
       0,
@@ -276,6 +279,7 @@ impl PEventGenerator {
 
   }
 
+  //pub async fn generate_event_from_plan<AP: IActionPlan<bool>>(&self, plan: AP) { }
 
   pub async fn generate_event_pe2(
     &mut self,

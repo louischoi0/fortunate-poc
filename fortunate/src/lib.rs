@@ -16,3 +16,5 @@ pub mod matrix;
 pub mod window;
 pub mod fnode;
 pub mod actionplanner;
+pub mod eventgenerator;
+pub mod macros;

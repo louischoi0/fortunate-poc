@@ -5,14 +5,16 @@ use aws_sdk_dynamodb::{ Client, };
 use async_trait::async_trait;
 use sha2::digest::typenum::Bit;
 
-use crate::cursor::Cursor;
+use crate::cursor::{Cursor, TCursor};
 use crate::flog::FortunateLogger;
 use crate::matrix::ObjectSession;
 use crate::sessions::RedisImpl;
-use crate::{dynamoc, tsgen};
+use crate::{dynamoc, tsgen, hashlib};
 use crate::primitives::DataType;
 use crate::window::{TBitWindow, WindowInitializer, BitWindow, WindowInitializable, WindowShufflable};
 use crate::cursor::{DimensionWindowCursor, DCursor};
+
+const NodeLoggerS01: FortunateLogger = FortunateLogger::new("node_s01");
 
 pub async fn get_node_s_signals(
   client: &Client, 
@@ -100,16 +102,17 @@ pub struct INodeImpl_S01<W: TBitWindow, V: Clone + Copy> {
   region: std::string::String,
 
   session: ObjectSession,
-  logger: FortunateLogger,
+  logger: &'static FortunateLogger,
 }
 
 impl INodeImpl_S01<BitWindow, u16> {
 
-  pub async fn new(uuid: &std::string::String) -> Self {
+  pub async fn new(region: &std::string::String) -> Self {
     let mut v = vec![];
     let mut v2 = vec![];
 
     let wi = WindowInitializer::<BitWindow>::new();
+    let uuid = hashlib::uuid(6);
 
     // InodeImpl_S01 have 10 windows for 2^x
     for i in (1..11) {
@@ -139,7 +142,7 @@ impl INodeImpl_S01<BitWindow, u16> {
         std::string::String::from("nodes01"),
       ),
 
-      logger: FortunateLogger::new("InodeImpl_S01")
+      logger: &NodeLoggerS01
     }
   }
 }
@@ -190,7 +193,9 @@ impl INode for INodeImpl_S01<BitWindow, u16> {
 
     let epoch = c.epoch();
     let ts = c.timestamp();
-    let region = std::string::String::from("");
+    let uuid = c.advance(6);
+
+    let region = std::string::String::from(""); //TODO
 
     let data = get_node_signal_hm(&epoch, &signalbuffer, &ts, &region);
 
@@ -213,7 +218,7 @@ impl INode for INodeImpl_S01<BitWindow, u16> {
 
     let s = self.cursor2.advance();
     let s2 = self.cursor10.advance();
-    epoch + &ts + &s + &s2
+    epoch + &self.uuid + &ts + &s + &s2
   }
 
   
