@@ -21,6 +21,10 @@ pub async fn get_node_s_signals(
   epoch: &String
 ) -> Vec<HashMap<String, DataType>> {
 
+  NodeLoggerS01.info(
+    format!("op:get_node_s_signals; epoch:{}", epoch).as_str()
+  );
+
   let _nodesignal_dimpl = dynamoc::DynamoHandler::nodesignal();
 
   let qctx = crate::dynamoc::DynamoSelectQueryContext {
@@ -69,8 +73,9 @@ impl BitArraySignalKey {
 #[async_trait]
 pub trait INode { 
   fn _interval(&mut self); 
-  async fn emit(&mut self) -> HashMap<String, String>;
+  fn emit(&mut self) -> HashMap<String, String>;
   fn signalbuffer(&mut self) -> String;
+  async fn commit(&mut self, data: &HashMap<String, String>);
 
   async fn process(&mut self) {
     let loop_interval = 1000;
@@ -81,7 +86,8 @@ pub trait INode {
 
       if (frame_cnt % emit_inteval == 0) {
         self._interval();
-        self.emit().await;
+        let data = self.emit();
+        self.commit(&data).await;
       }
 
       frame_cnt += 1;
@@ -151,7 +157,7 @@ fn get_node_signal_hm(
   epoch: &String,
   signalbuffer: &String,
   ts: &String,
-  region: &String 
+  uuid: &String 
 ) -> HashMap<String, String> {
   let mut data = HashMap::<String, String>::new();
 
@@ -171,6 +177,10 @@ fn get_node_signal_hm(
     String::from("epoch"), epoch.to_owned()
   );
 
+  data.insert(
+    String::from("node_uuid"), uuid.to_owned()
+  );
+
   data
 }
 
@@ -187,30 +197,30 @@ impl INode for INodeImpl_S01<BitWindow, u16> {
     }
   }
 
-  async fn emit(&mut self) -> HashMap<String, String> {
-    let signalbuffer = self.signalbuffer();
-    let mut c = Cursor::new(&signalbuffer);
-
-    let epoch = c.epoch();
-    let ts = c.timestamp();
-    let uuid = c.advance(6);
-
-    let region = std::string::String::from(""); //TODO
-
-    let data = get_node_signal_hm(&epoch, &signalbuffer, &ts, &region);
-
+  async fn commit(&mut self, data: &HashMap<String, String>) {
     let hdr = dynamoc::DynamoHandler::node();
     let request = hdr.make_insert_request(&self.dynamo_client, data.to_owned());
 
     hdr.commit(request).await;
 
-    self.logger.p(
-      format!("send signal: {:?};", data).as_str()
+    self.logger.info(
+      format!("op=send_signal; data={:?};", data).as_str()
     );
 
     self.session.timestamp();
+  }
 
-    data
+  fn emit(&mut self) -> HashMap<String, String> {
+    let signalbuffer = self.signalbuffer();
+    let mut c = Cursor::new(&signalbuffer);
+
+    let epoch = c.epoch();
+    let uuid = c.advance(6);
+    let ts = c.timestamp();
+
+    let region = std::string::String::from(""); //TODO
+
+    get_node_signal_hm(&epoch, &signalbuffer, &ts, &uuid)
   }
 
   fn signalbuffer(&mut self) -> String {

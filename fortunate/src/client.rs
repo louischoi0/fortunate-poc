@@ -5,14 +5,17 @@ use redis::Commands;
 use tokio::time::{sleep, Duration};
 
 use crate::finalizer::{FortunateEventFinalizer, BlockVerifiable, BlockFinalizable};
+use crate::flog::FortunateLogger;
 use crate::primitives::dunwrap_s;
-use crate::{payload, hashlib};
+use crate::{payload, hashlib, dynamoc};
 use crate::fnode::{INodeImpl_S01, INode};
 use crate::sessions::RedisImpl;
 use crate::{finalizer::FortunateNodeSignalFinalizer};
 use crate::eventgenerator::EventGenerator;
 use crate::actionplanner::{ActionPlanner, ExpMap, IActionPlan, BitArrayActionPlan};
+use crate::benchmark::{benchmark_main, benchmark_node};
 
+const ClientLogger: FortunateLogger = FortunateLogger::new("client");
 
 pub fn cli() -> Command {
     Command::new("/usr/local/bin/fortunate")
@@ -60,10 +63,16 @@ pub fn cli() -> Command {
           Command::new("dgenerate")
                 .about("generate some events and it is for development")
         )
-      
+        .subcommand(
+                Command::new("stats")
+                .about("generate stats for a plan")
+        )
 }
 
 pub async fn generate_event_periodically(pe: &mut EventGenerator) -> () {
+  ClientLogger.info(
+    format!("op:generate_event_periodically;").as_str()
+  );
   let loop_interval = 5000;
   let commiter = crate::event::EventCmtr::new().await;
 
@@ -88,7 +97,9 @@ pub async fn generate_event_periodically(pe: &mut EventGenerator) -> () {
       crate::matrix::Matrix::get_prev_epoch(&pe.region, &mut pe.cimpl, &pe.uuid).await;
     
     let p = payload.buffer.unwrap().to_owned();
-    let plan = ap.get_actionplan_for_event_pe::<bool>(&epoch, &em).await;
+    let dynamo_client = dynamoc::get_dynamo_client().await;
+
+    let plan = ap.get_actionplan_for_event_pe::<bool>(&dynamo_client, &epoch, &em).await;
 
     let res = pe.generate_event_from_plan(plan, &"".to_string()).await; //TODO
     println!("peventgenerator: {}:{}, {:?}", epoch, p, res);
@@ -130,8 +141,6 @@ pub async fn client_main() {
    match matches.subcommand() {
       Some(("runnode", sub_matches)) => {
         println!( "run node: {}", sub_matches.get_one::<String>("NODEID").expect("required"));
-        let nodeid = sub_matches.get_one::<String>("NODEID").unwrap();
-        let nodeid = format!("node:{}", nodeid);
 
         let region = std::string::String::from("matrix:northeast-1"); 
         let mut nd = INodeImpl_S01::new(&region).await;
@@ -168,10 +177,6 @@ pub async fn client_main() {
 
       Some(("pubevent", sub_matches)) => {
         let region = "northeast-1".to_string();
-        let mut pev = crate::event::PEventGenerator::new(
-          &std::string::String::from("matrix:northeast-1")
-        ).await;
-
         let mut pe = EventGenerator::new(&region);
 
         generate_event_periodically(&mut pe).await;
@@ -194,7 +199,7 @@ pub async fn client_main() {
             Some(prev_epoch)
           ).await;
         };
-      }
+      },
 
       Some(("verify", sub_matches)) => {
         let component = sub_matches.get_one::<String>("COMPONENT").expect("required.");
@@ -259,6 +264,10 @@ pub async fn client_main() {
         }
 
        },
+      Some(("stats", _sub_matches)) => {
+        //benchmark_main().await;
+        benchmark_node().await;
+      }
 
        _ => panic!("panic here."),
    }

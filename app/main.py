@@ -4,6 +4,9 @@ from pydantic import BaseModel
 from fastapi import FastAPI, Query, Form
 from fastapi import Depends, HTTPException, status
 
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware import Middleware
+
 from sqlalchemy.orm import Session
 from uuid import UUID
 
@@ -20,6 +23,19 @@ from .authutils import (
 )
 from .httputils import response
 from .authutils import oauth2_schme, get_current_user
+
+middleware = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "*",
+            "http://localhost:3000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+]
 
 
 class Token(BaseModel):
@@ -46,8 +62,7 @@ class UserLoginFrom(BaseModel):
         return cls(email=email, password=password)
 
 
-app = FastAPI()
-
+app = FastAPI(middleware=middleware)
 
 app.include_router(auth.router)
 app.include_router(event.router)

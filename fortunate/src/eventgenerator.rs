@@ -28,8 +28,6 @@ impl EventGenerator {
   ) -> EventBuffer {
 
     let mut buffer = epoch.to_owned() + &self.uuid + &ts.s;
-    buffer += &crate::hashlib::hash_payload(payload);
-
     let event_key = buffer.to_owned();
 
     match event_type {
@@ -48,6 +46,7 @@ impl EventGenerator {
       buffer += &s.signal_key;
     };
 
+    buffer += &crate::hashlib::hash_payload(payload);
     EventBuffer { event_key: event_key, buffer: buffer }
   }
 

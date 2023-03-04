@@ -11,12 +11,14 @@ use aws_sdk_dynamodb::{
 
 use std::{collections::{HashMap, hash_map::RandomState}, result, borrow::BorrowMut};
 use log::{debug, error, info, trace, warn};
-use crate::primitives::{DataType, Pair};
+use crate::{primitives::{DataType, Pair}, flog::FortunateLogger};
 
 pub async fn get_dynamo_client() -> Client {
   let shared_config = aws_config::load_from_env().await;
   Client::new(&shared_config)
 }
+
+const DynamoLogger: FortunateLogger = FortunateLogger::new("dynamoc");
 
 
 struct DynamoSchemaColumn {
@@ -301,11 +303,15 @@ impl DynamoHandler {
     &self, 
     client: &Client, 
     qctx: &DynamoSelectQueryContext<'a>,
-  ) -> Result<SelectQuerySetResult, ()> {
+  ) -> Result<SelectQuerySetResult, ()>  {
+
+    DynamoLogger.info(
+      format!("op:q; context:{:?}", &qctx.conditions).as_str()
+    );
 
     match &qctx.query_subtype  {
       DynamoSelectQuerySubType::All => {
-        let mut q = aws_sdk_dynamodb::client::fluent_builders::Query::build(client, qctx);
+        let q = aws_sdk_dynamodb::client::fluent_builders::Query::build(client, qctx);
         let rspn = q.send().await;
         let items = rspn.unwrap().items.unwrap();
 

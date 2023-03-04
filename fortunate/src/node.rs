@@ -20,7 +20,6 @@ use aws_sdk_dynamodb::{
 };
 
 
-const NodeLogger: FortunateLogger = FortunateLogger::new("node");
 
 #[derive(Debug)]
 enum FNodeStatus {
@@ -84,6 +83,10 @@ pub struct NodeSignalKeyRefSer {
 }
 
 impl NodeSignalKeyRefSer {
+  pub fn from(ref_signal_key: &std::string::String) -> Self {
+    NodeSignalKeyRefSer { signal_key: ref_signal_key.to_owned() }
+  }
+
   pub fn new(
     signal_key: &std::string::String,
     ref_index: usize,

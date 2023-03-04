@@ -1,4 +1,8 @@
-use crate::{window::{BitWindow, TBitWindow}, fnode::BitArraySignalKey};
+use std::{collections::HashMap};
+use crate::{window::{BitWindow, TBitWindow}, fnode::BitArraySignalKey, flog::FortunateLogger, primitives::TString, node::NodeSignalKeyRefSer};
+use crate::event::Event;
+
+const CursorLogger: FortunateLogger = FortunateLogger::new("cursor");
 
 #[derive(Debug)]
 pub struct Cursor {
@@ -38,6 +42,10 @@ impl Cursor {
     self.advance(16)
   }
 
+  pub fn uuid(&mut self) -> String {
+    self.advance(6)
+  }
+
   pub fn new(s: &String) -> Self {
     Cursor { msg: s.to_owned(), now: 0 }
   }
@@ -49,6 +57,10 @@ impl Cursor {
   }
 
   pub fn advance_until(&mut self, s: &std::string::String) -> String {
+    CursorLogger.info(
+      format!("op=advance_until;s={}", s).as_str()
+    );
+
     let mut c = self.now;
     let len = s.len();
 
@@ -131,6 +143,8 @@ pub trait DCursor<V> {
 pub struct DimensionWindowCursor<T: TBitWindow> {
   pub wdw_ref: Vec<T>,
   pub now: usize,
+  pub repeat: bool,
+  pub size: usize,
 }
 
 impl DimensionWindowCursor<BitWindow> {
@@ -146,9 +160,12 @@ impl DimensionWindowCursor<BitWindow> {
   }
 
   pub fn new(arr: Vec<BitWindow>) -> Self {
+    let size = arr.len().try_into().unwrap();
     DimensionWindowCursor { 
       wdw_ref: arr, 
-      now: 0 
+      now: 0,
+      repeat: true,
+      size: size,
     }
   }
 }
@@ -158,6 +175,10 @@ impl DCursor<String> for DimensionWindowCursor<BitWindow> {
   fn advance(&mut self) -> String {
     self.now += 1;
 
+    if (self.now >= self.size) {
+      self.now = 0;
+    }
+
     vec_to_str_vu16(
       &self.iter_2d()
     )
@@ -165,7 +186,44 @@ impl DCursor<String> for DimensionWindowCursor<BitWindow> {
 
 }
 
+pub struct EventRowCursor { }
 
+impl EventRowCursor {
+
+  pub fn parse(buffer: &std::string::String) -> Event {
+    let mut data = HashMap::<String, String>::new();
+    let mut c = Cursor::new(buffer);
+    let mut ref_signals: Vec<String> = vec![];
+
+    let epoch = c.epoch();
+    let uuid = c.uuid();
+    let ts = c.timestamp();
+
+    let event_type = c.advance(2);
+    let ref_signal_count = c.advance(4).convert_u8();
+
+    let refsignal_length = 44;
+
+    for i in (0.. ref_signal_count) {
+      let signal = c.advance(refsignal_length);
+      //let signal = NodeSignalKeyRefSer::from(&buffer);
+      ref_signals.push(signal);
+    };
+
+    Event {
+      event_key: epoch.to_owned() + &uuid + &ts,
+      epoch: epoch,
+      event_type: crate::event::EventType::PE(event_type),
+      event_subtype: None, //TODO
+      ts: crate::tsgen::Timestamp { s: ts },
+      buffer: None, //TODO
+      result: None, //TODO,
+      payload: None, //TODO
+      ref_signals: Some(ref_signals),
+    }
+  }
+
+}
 
 pub struct BitArraySignalKeyCursor {
   pub key: String,
@@ -182,20 +240,33 @@ impl BitArraySignalKeyCursor {
   }
 
   pub fn bitarr(&self) -> String {
-    // 6: epoch length; 16: timestamp length;
-    self.key.as_str()[6+16..].to_string()
+    // 6: epoch; 6: node uuid; 16: timestamp length;
+    self.key.as_str()[6+6+16..].to_string()
+  }
+
+  pub fn rbit(&self, idx: usize) -> char {
+    // 6: epoch; 6: node uuid; 16: timestamp length;
+    let ridx = 6+6+16+idx;
+    let v = self.key.chars().nth(ridx).unwrap();
+    CursorLogger.info(
+      format!("op=bit;idx={:?};ridx={:?};current={};value={};", idx, ridx, self.now, v).as_str()
+    );
+    v
   }
 
   pub fn bit(&self, idx: usize) -> bool {
-    let idx = 6+16+idx;
-    let bit = self.key.chars().nth(idx).unwrap();
+    let bit = self.rbit(idx);
+    let mut value: Option<bool> = None;
 
     if (bit == '0') {
-      false
+      value = Some(false);
     }
-    else {
-      true
+
+    if (bit == '1') {
+      value = Some(true);
     }
+
+    value.expect("invalid bit value!")
   }
 
 }

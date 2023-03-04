@@ -22,7 +22,7 @@ mod matrix;
 mod window;
 mod actionplanner;
 mod eventgenerator;
-mod macros;
+mod benchmark;
 
 use log::{debug, error, info, trace, warn};
 

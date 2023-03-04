@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use tokio::time::{sleep, Duration};
-use redis::Commands;
+use redis::{Commands, RedisError};
 
 use crate::finalizer::{BlockFinalizable, FortunateEventFinalizer};
 use crate::{tsgen, sessions::RedisImpl, node::FNode, finalizer::FortunateNodeSignalFinalizer};
@@ -53,15 +53,10 @@ impl Matrix {
     requester: &std::string::String,
   ) -> std::string::String {
 
-    MatrixLogger.info(
-      format!("op:get_prev_epoch; matrix:{};", region).as_str()
-    );
+    //MatrixLogger.info( format!("op:get_prev_epoch; matrix:{};", region).as_str());
+    //ObjectLock::acquire(cimpl, "matrix", region, requester, 0).await;
 
-    ObjectLock::acquire(cimpl, "matrix", region, requester, 0).await;
-
-    cimpl.redis_connection.get::<String,String>(
-      format!("{}:prev_epoch", region)
-    ).unwrap()
+    cimpl.redis_connection.get::<String,String>( format!("matrix:{}:prev_epoch", region)).unwrap()
   }
 
   pub async fn get_epoch(
@@ -70,15 +65,27 @@ impl Matrix {
     requester: &std::string::String,
   ) -> std::string::String {
 
+    MatrixLogger.info(
+      format!("op:get_epoch; matrix:{};", region).as_str()
+    );
+
     ObjectLock::acquire(
       cimpl, 
       "matrix",
       region, requester, 0
     ).await;
 
-    cimpl.redis_connection.get::<String,String>(
-      format!("{}:epoch", region)
-    ).unwrap()
+    let res = cimpl.redis_connection.get::<String,String>(
+      format!("matrix:{}:epoch", region)
+    );
+
+    match res {
+      Ok(x) => x,
+      e=> { 
+        panic!("{:?}",e)
+      }
+    }
+
   }
 
   pub async fn new(uuid: &std::string::String) -> Self {
@@ -186,7 +193,7 @@ impl Matrix {
     loop {
       loop_cnt += 1;
 
-      if (loop_cnt % 100 == 0) {
+      if (loop_cnt % 1200 == 0) {
         self.logger.info("session is working.");
       }
 

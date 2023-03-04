@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub enum DataType {
   S(std::string::String),
@@ -15,6 +17,17 @@ pub struct Pair <K, V>{
 }
 
 
+pub fn wrap_hashmap_s(map: &HashMap<String,String>) -> HashMap<String, DataType> {
+  let mut nmap = HashMap::<String, DataType>::new();
+
+  for (k, v) in map {
+    nmap.insert(k.to_owned(), DataType::S((v.to_owned())));
+  }
+
+  nmap
+}
+
+
 pub fn dunwrap_s(d: &DataType) -> std::string::String {
   match d {
     DataType::S(x) => x.to_owned(),
@@ -25,6 +38,7 @@ pub fn dunwrap_s(d: &DataType) -> std::string::String {
 pub trait TString {
   fn shuffle(&self) -> String;
   fn shuffle_n(&self, n: usize) -> String;
+  fn convert_u8(&self) -> u8;
 }
 
 impl TString for std::string::String {
@@ -42,6 +56,11 @@ impl TString for std::string::String {
       s = s.shuffle()
     }
     s
+  }
+
+
+  fn convert_u8(&self) -> u8 {
+    self.parse::<u8>().unwrap()
   }
   
 }

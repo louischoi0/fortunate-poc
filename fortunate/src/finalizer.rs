@@ -243,6 +243,7 @@ impl FortunateEventFinalizer {
     data.insert(String::from("finalized"), String::from("y"));
 
     let request = self._eventblock_dimpl.make_insert_request(&self.dynamo_client, data);
+
     self._event_dimpl.commit(request).await
       .expect("dynamo operation failed some reason");
 

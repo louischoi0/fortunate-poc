@@ -1,8 +1,11 @@
 use rand::{Rng, thread_rng};
 
+use std::collections::HashMap;
+
 use crate::cursor::BitArraySignalKeyCursor;
 use crate::event::EventType;
-use crate::primitives::{Pair, dunwrap_s};
+use crate::flog::FortunateLogger;
+use crate::primitives::{Pair, dunwrap_s, DataType};
 use crate::{algorithms, primitives::TString};
 use crate::fnode::get_node_s_signals;
 use crate::dynamoc::{get_dynamo_client};
@@ -10,10 +13,12 @@ use aws_sdk_dynamodb::{ Client, };
 use crate::node::NodeSignalKeyRefSer;
 
 pub struct ActionPlanner {
-  status: std::string::String,
-  dynamo_client: Client,
+  pub status: std::string::String,
 }
 
+const ActionPlannerLogger: FortunateLogger = FortunateLogger::new("actionplanner");
+
+#[derive(Clone, Copy, Debug)]
 pub struct ExpMap {
   pub e2: u64, // a
   pub e10: u64, // b
@@ -40,6 +45,9 @@ pub struct BitArrayActionPlan<T> {
 impl IActionPlan<bool> for BitArrayActionPlan<bool> {
 
   fn signals(&self) -> Vec<NodeSignalKeyRefSer> {
+    ActionPlannerLogger.info(
+      format!("op=signals;").as_str()
+    );
     let mut v: Vec<NodeSignalKeyRefSer> = vec![];
 
     for it in self.signal_key_ref_pairs.iter() {
@@ -72,11 +80,18 @@ impl IActionPlan<bool> for BitArrayActionPlan<bool> {
   }
 
   fn act(&self) -> bool {
+    ActionPlannerLogger.info(
+      format!("op=act;").as_str()
+    );
     let mut return_value = true;
     
     for kp in self.signal_key_ref_pairs.iter() {
       let k = &kp.signal_key;
       let p = kp.refindex();
+
+      ActionPlannerLogger.info(
+        format!("op=newcursor;value={}",&k).as_str()
+      );
 
       let c = BitArraySignalKeyCursor::new(&k);
       return_value = c.bit(p.try_into().unwrap()) && return_value;
@@ -95,15 +110,14 @@ impl IActionPlan<bool> for BitArrayActionPlan<bool> {
 impl ActionPlanner {
 
   pub async fn new() -> Self {
-    ActionPlanner { status: "".to_string(), dynamo_client: get_dynamo_client().await }
+    ActionPlanner { status: "".to_string() }
   }
 
-  pub async fn get_actionplan_for_event_pe<V>(
-    &self, 
-    epoch: &std::string::String, expmap: &ExpMap) -> BitArrayActionPlan<V> {
-    let signals 
-        = get_node_s_signals(&self.dynamo_client, epoch).await;
-
+  pub fn get_actionplan_from_signals<V>(
+    &self,
+    expmap: &ExpMap,
+    signals: &Vec<HashMap<String, DataType>>,
+  ) -> BitArrayActionPlan<V> {
     let estr = self.range_expmap(expmap);
 
     let mut c = crate::cursor::Cursor::new(&estr);
@@ -116,12 +130,6 @@ impl ActionPlanner {
       let exp = s.len();
       let signal = signals.get(signal_idx).unwrap();
 
-      let refsignal = NodeSignalKeyRefSer { 
-        signal_key: dunwrap_s(signal.get("signal_key").unwrap())          
-      };
-
-      key_ref_pairs.push(refsignal);
-
       let mut v_exp = 0;
 
       if ( s.chars().nth(0).unwrap() == 'a') {
@@ -133,12 +141,33 @@ impl ActionPlanner {
 
       signal_idx = (signal_idx + 1) % signals.len();
 
+      let refsignal = NodeSignalKeyRefSer::new(
+        &dunwrap_s(signal.get("signal_key").unwrap()),
+        v_exp        
+      );
+
+      key_ref_pairs.push(refsignal);
+
       if (c.eof()) {
         break;
       }
     }
 
     BitArrayActionPlan::<V> { signal_key_ref_pairs: key_ref_pairs, result: None }
+
+  }
+
+  pub async fn get_actionplan_for_event_pe<V>(
+    &self, 
+    dynamo_client: &Client,
+    epoch: &std::string::String, 
+    expmap: &ExpMap
+  ) -> BitArrayActionPlan<V> {
+
+    let signals 
+        = get_node_s_signals(&dynamo_client, epoch).await;
+
+    self.get_actionplan_from_signals(expmap, &signals)
   }
 
   fn range_expmap(&self, expmap: &ExpMap) -> String {
